@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Pomba estilizada -->
+  <!-- Corpo -->
+  <ellipse cx="14" cy="18" rx="7" ry="5" fill="#ffffff" stroke="#333" stroke-width="0.6"/>
+  <!-- Cabeça -->
+  <circle cx="22" cy="13" r="3.5" fill="#ffffff" stroke="#333" stroke-width="0.6"/>
+  <!-- Bico -->
+  <polygon points="25.5,13 28,12 25.5,11.5" fill="#E4A832" stroke="#C88A20" stroke-width="0.3"/>
+  <!-- Olho -->
+  <circle cx="23" cy="12.5" r="0.7" fill="#222"/>
+  <!-- Pescoço (conexão cabeça-corpo) -->
+  <path d="M19,15 Q20,16 18,18" fill="#ffffff" stroke="#333" stroke-width="0.6"/>
+  <!-- Asa aberta -->
+  <path d="M10,16 Q4,10 6,6 Q10,8 14,12 Z" fill="#f0f0f0" stroke="#333" stroke-width="0.6"/>
+  <path d="M6,6 Q3,4 2,2" stroke="#333" stroke-width="0.5" fill="none" stroke-linecap="round"/>
+  <path d="M6,6 Q4,5 3,4" stroke="#333" stroke-width="0.4" fill="none" stroke-linecap="round"/>
+  <!-- Penas da asa (detalhe) -->
+  <line x1="7" y1="8" x2="10" y2="12" stroke="#ccc" stroke-width="0.4"/>
+  <line x1="8" y1="7" x2="12" y2="12" stroke="#ccc" stroke-width="0.4"/>
+  <!-- Cauda -->
+  <path d="M7,20 Q5,22 4,25 Q7,23 9,21" fill="#f0f0f0" stroke="#333" stroke-width="0.5"/>
+  <!-- Ramo de oliveira no bico -->
+  <path d="M27,12 Q29,10 30,8" stroke="#4CAF50" stroke-width="0.7" fill="none" stroke-linecap="round"/>
+  <ellipse cx="29.5" cy="9" rx="1.5" ry="0.8" fill="#4CAF50" transform="rotate(-30 29.5 9)"/>
+  <ellipse cx="28.5" cy="10.5" rx="1.2" ry="0.7" fill="#66BB6A" transform="rotate(-20 28.5 10.5)"/>
+</svg>

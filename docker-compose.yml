@@ -1,0 +1,64 @@
+# Docker Compose para desenvolvimento local.
+# Sobe o PostgreSQL, o backend (FastAPI) e o frontend (React/Vite).
+#
+# Pré-requisito: Docker Desktop instalado.
+# Uso: docker-compose up -d
+#
+# O projeto roda hoje sem Docker (SQLite + uvicorn direto); este arquivo
+# prepara a migração para o padrão DTI sem afetar o modo atual.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-detran}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-detran_local}
+      POSTGRES_DB: ${POSTGRES_DB:-processamento}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-detran}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-detran}:${POSTGRES_PASSWORD:-detran_local}@postgres:5432/${POSTGRES_DB:-processamento}
+      AUTH_ENABLED: "false"
+      SEI_TOKEN_URL: ${SEI_TOKEN_URL:-}
+      SEI_CLIENT_ID: ${SEI_CLIENT_ID:-}
+      SEI_CLIENT_SECRET: ${SEI_CLIENT_SECRET:-}
+      SEI_API_BASE: ${SEI_API_BASE:-}
+      SEI_SIGLA_SISTEMA: ${SEI_SIGLA_SISTEMA:-}
+      SEI_IDENTIFICACAO_SERVICO: ${SEI_IDENTIFICACAO_SERVICO:-}
+      SEI_TRACE_ID: ${SEI_TRACE_ID:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - api
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  postgres_data:

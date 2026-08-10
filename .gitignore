@@ -1,0 +1,54 @@
+# ===== Segredos / ambiente =====
+.env
+*.env
+!*.env.example
+*.key
+*.pem
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.db
+*.sqlite3
+# Backups do banco (ex.: processamento.db.bak_20260729_111512).
+# O padrão *.db não cobre isso, porque o sufixo vem DEPOIS da extensão —
+# e esses arquivos têm centenas de MB e dados reais dos processos.
+*.db.bak*
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ===== Node / frontend =====
+node_modules/
+dist/
+build/
+.vite/
+
+# Frontend compilado que o backend serve — é cópia de frontend/dist,
+# gerada por deploy.bat. Não versionar artefato de build.
+backend/static/
+
+# ===== Sistema / IDE =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ===== Artefatos locais =====
+*.log
+relatorios_cache.db
+
+# Cache de metadados do script que baixa os textos-padrão do SEI
+.cache_textos_padroes.json
+processos_ja_vistos.json
+
+# Node portátil extraído localmente (não versionar)
+.tools/
+
+# Exports de fluxos do Power Automate (contêm client_secret em texto puro)
+flows_referencia/

@@ -1,0 +1,385 @@
+// Schema Prisma — espelho do modelo de dados atual (backend/app/db/models.py).
+//
+// Este arquivo existe para duas finalidades:
+// 1. Quando o Docker + PostgreSQL estiver disponível, gerar as migrações com
+//    `npx prisma migrate dev`.
+// 2. Documentar o modelo relacional num formato que o template da DTI já espera.
+//
+// ATENÇÃO: o backend continua usando SQLAlchemy. Este schema NÃO é consumido
+// pelo código em produção hoje — é preparação para a migração futura.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==============================================================================
+// Entidades do domínio
+// ==============================================================================
+
+model AgenteRegulado {
+  id          Int       @id @default(autoincrement())
+  tipo        String?   @db.VarChar(50)
+  segmento    String?   @db.VarChar(30)
+  razaoSocial String?   @map("razao_social") @db.VarChar(255)
+  cnpjCpf     String?   @map("cnpj_cpf") @db.VarChar(20)
+  crmCrp      String?   @map("crm_crp") @db.VarChar(50)
+  logradouro  String?   @db.VarChar(255)
+  numero      String?   @db.VarChar(20)
+  bairro      String?   @db.VarChar(120)
+  cidade      String?   @db.VarChar(120)
+
+  processos  Processo[]
+  cautelares Cautelar[]
+
+  @@index([cnpjCpf])
+  @@map("agente_regulado")
+}
+
+model Relatorio {
+  id                 Int       @id @default(autoincrement())
+  idRelatorioOrigem  String?   @map("id_relatorio_origem") @db.VarChar(50)
+  numeroSei          String?   @map("numero_sei") @db.VarChar(50)
+  agenteId           Int?      @map("agente_id")
+  tipoDocumento      String?   @map("tipo_documento") @db.VarChar(120)
+  dataRecebimento    DateTime? @map("data_recebimento") @db.Date
+  conteudoHtml       String?   @map("conteudo_html") @db.Text
+
+  @@index([idRelatorioOrigem])
+  @@index([numeroSei])
+  @@map("relatorio")
+}
+
+model CaixaEntrada {
+  id                       Int       @id @default(autoincrement())
+  idRelatorio              String?   @map("id_relatorio") @db.VarChar(50)
+  numeroSei                String?   @map("numero_sei") @db.VarChar(50)
+  protocoloLimpo           String?   @unique @map("protocolo_limpo") @db.VarChar(30)
+  idProcedimento           String?   @map("id_procedimento") @db.VarChar(30)
+  razaoSocial              String?   @map("razao_social") @db.VarChar(255)
+  agenteRegulado           String?   @map("agente_regulado") @db.VarChar(120)
+  agenteOrigem             String?   @map("agente_origem") @db.VarChar(120)
+  segmento                 String?   @db.VarChar(30)
+  municipio                String?   @db.VarChar(120)
+  superintendencia         String?   @db.VarChar(120)
+  totalApontamentos        Int?      @map("total_apontamentos")
+  totalItensAvaliados      Int?      @map("total_itens_avaliados")
+  tipoDocumento            String?   @map("tipo_documento") @db.VarChar(120)
+  cnpjCpf                  String?   @map("cnpj_cpf") @db.VarChar(20)
+  dataRecebimento          DateTime? @map("data_recebimento") @db.Date
+  dataRemetido             DateTime? @map("data_remetido") @db.Date
+  dataInicioFiscalizacao   DateTime? @map("data_inicio_fiscalizacao") @db.Date
+  statusTriagem            String?   @default("pendente") @map("status_triagem") @db.VarChar(30)
+  conteudoHtml             String?   @map("conteudo_html") @db.Text
+  numeroProcessoSei        String?   @map("numero_processo_sei") @db.VarChar(50)
+  idProcedimentoProcesso   String?   @map("id_procedimento_processo") @db.VarChar(30)
+  dataInstauracao          DateTime? @map("data_instauracao") @db.Date
+  idUnidadeSei             String?   @map("id_unidade_sei") @db.VarChar(30)
+  verificadoEm             DateTime? @map("verificado_em")
+
+  anotacoes             Anotacao[]
+  historicoDespachos    HistoricoDespacho[]
+  fasesAndamento        FaseProcessoAndamento[]
+  prazos                PrazoProcesso[]
+  eventos               EventoProcesso[]
+  notificacoes          Notificacao[]
+  consultaUnificada     ConsultaUnificada[]
+
+  @@index([idRelatorio])
+  @@index([numeroSei])
+  @@index([protocoloLimpo])
+  @@map("caixa_entrada")
+}
+
+model Processo {
+  id                  Int       @id @default(autoincrement())
+  numeroSei           String?   @map("numero_sei") @db.VarChar(50)
+  agenteId            Int?      @map("agente_id")
+  segmento            String?   @db.VarChar(30)
+  dataInstauracao     DateTime? @map("data_instauracao") @db.Date
+  situacaoProcessual  String?   @map("situacao_processual") @db.VarChar(120)
+  faseAtual           String?   @map("fase_atual") @db.VarChar(120)
+  criadoEm            DateTime  @default(now()) @map("criado_em")
+
+  agente     AgenteRegulado? @relation(fields: [agenteId], references: [id])
+  fases      FaseProcesso[]
+  prazos     Prazo[]
+  cautelares Cautelar[]
+
+  @@index([numeroSei])
+  @@map("processo")
+}
+
+model FaseProcesso {
+  id         Int       @id @default(autoincrement())
+  processoId Int       @map("processo_id")
+  fase       String?   @db.VarChar(120)
+  dataFase   DateTime? @map("data_fase") @db.Date
+
+  processo Processo @relation(fields: [processoId], references: [id])
+
+  @@map("fase_processo")
+}
+
+model Prazo {
+  id         Int       @id @default(autoincrement())
+  processoId Int       @map("processo_id")
+  tipo       String?   @db.VarChar(120)
+  dataInicio DateTime? @map("data_inicio") @db.Date
+  dataLimite DateTime? @map("data_limite") @db.Date
+  situacao   String?   @db.VarChar(30)
+
+  processo Processo @relation(fields: [processoId], references: [id])
+
+  @@map("prazo")
+}
+
+model Cautelar {
+  id         Int       @id @default(autoincrement())
+  processoId Int?      @map("processo_id")
+  agenteId   Int?      @map("agente_id")
+  tipo       String?   @db.VarChar(120)
+  dataInicio DateTime? @map("data_inicio") @db.Date
+  dataFim    DateTime? @map("data_fim") @db.Date
+  situacao   String?   @db.VarChar(30)
+
+  processo Processo?       @relation(fields: [processoId], references: [id])
+  agente   AgenteRegulado? @relation(fields: [agenteId], references: [id])
+
+  @@map("cautelar")
+}
+
+model Feriado {
+  id        Int      @id @default(autoincrement())
+  data      DateTime @db.Date
+  descricao String?  @db.VarChar(120)
+  tipo      String?  @db.VarChar(30)
+
+  @@index([data])
+  @@map("feriado")
+}
+
+model Anotacao {
+  id             Int      @id @default(autoincrement())
+  caixaEntradaId Int      @map("caixa_entrada_id")
+  autor          String?  @db.VarChar(255)
+  texto          String   @db.Text
+  criadoEm       DateTime @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("anotacao")
+}
+
+model HistoricoDespacho {
+  id                       Int      @id @default(autoincrement())
+  caixaEntradaId           Int      @map("caixa_entrada_id")
+  tipo                     String   @db.VarChar(20)
+  status                   String   @db.VarChar(20)
+  mensagem                 String?  @db.Text
+  numeroSeiResultado       String?  @map("numero_sei_resultado") @db.VarChar(50)
+  idProcedimentoResultado  String?  @map("id_procedimento_resultado") @db.VarChar(30)
+  documentoFormatado       String?  @map("documento_formatado") @db.VarChar(30)
+  avisos                   String?  @db.Text
+  autor                    String?  @db.VarChar(255)
+  criadoEm                 DateTime @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("historico_despacho")
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.VarChar(255)
+  nome      String?  @db.VarChar(255)
+  idUnidade String?  @map("id_unidade") @db.VarChar(30)
+  perfil    String?  @db.VarChar(30)
+  ativo     Boolean  @default(true)
+
+  @@map("usuario")
+}
+
+// ==============================================================================
+// Tabelas de referência (config)
+// ==============================================================================
+
+model ConfigUnidade {
+  id               Int    @id @default(autoincrement())
+  agenteRegulado   String @map("agente_regulado") @db.VarChar(120)
+  idUnidade        String @map("id_unidade") @db.VarChar(30)
+  descricaoUnidade String? @map("descricao_unidade") @db.VarChar(255)
+
+  @@index([agenteRegulado])
+  @@map("config_unidade")
+}
+
+model ConfigTipoProcedimento {
+  id                  Int    @id @default(autoincrement())
+  agenteRegulado      String @unique @map("agente_regulado") @db.VarChar(120)
+  idTipoProcedimento  String @map("id_tipo_procedimento") @db.VarChar(30)
+
+  @@map("config_tipo_procedimento")
+}
+
+model ConfigBlocoAssinatura {
+  id             Int    @id @default(autoincrement())
+  agenteRegulado String @map("agente_regulado") @db.VarChar(120)
+  cargo          String @db.VarChar(120)
+  idBloco        String @map("id_bloco") @db.VarChar(30)
+
+  @@index([agenteRegulado])
+  @@map("config_bloco_assinatura")
+}
+
+model ConfigTemplateDespacho {
+  id             Int       @id @default(autoincrement())
+  agenteRegulado String    @map("agente_regulado") @db.VarChar(120)
+  descricaoDoc   String    @map("descricao_doc") @db.VarChar(255)
+  templateHtml   String    @map("template_html") @db.Text
+  nomeArvore     String?   @map("nome_arvore") @db.VarChar(255)
+  padrao         Boolean   @default(false)
+  htmlOriginal   String?   @map("html_original") @db.Text
+  editadoEm      DateTime? @map("editado_em")
+  editadoPor     String?   @map("editado_por") @db.VarChar(255)
+
+  @@index([agenteRegulado])
+  @@map("config_template_despacho")
+}
+
+model ConfigEmailUnidade {
+  id             Int    @id @default(autoincrement())
+  idUnidade      String @unique @map("id_unidade") @db.VarChar(30)
+  agenteRegulado String @map("agente_regulado") @db.VarChar(120)
+  email          String @db.VarChar(255)
+  descricao      String? @db.VarChar(255)
+
+  @@index([agenteRegulado])
+  @@map("config_email_unidade")
+}
+
+// ==============================================================================
+// Fase de vida do processo administrativo sancionatório
+// ==============================================================================
+
+model FaseProcessoAndamento {
+  id             Int       @id @default(autoincrement())
+  caixaEntradaId Int       @map("caixa_entrada_id")
+  fase           String    @db.VarChar(50)
+  dataEntrada    DateTime  @default(now()) @map("data_entrada")
+  dataSaida      DateTime? @map("data_saida")
+  autor          String?   @db.VarChar(255)
+  observacao     String?   @db.Text
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("fase_processo_andamento")
+}
+
+model PrazoProcesso {
+  id              Int       @id @default(autoincrement())
+  caixaEntradaId  Int       @map("caixa_entrada_id")
+  fase            String    @db.VarChar(50)
+  dias            Int
+  dataInicio      DateTime  @map("data_inicio") @db.Date
+  dataVencimento  DateTime  @map("data_vencimento") @db.Date
+  reiniciado      Boolean   @default(false)
+  dataReinicio    DateTime? @map("data_reinicio") @db.Date
+  status          String    @default("em_andamento") @db.VarChar(30)
+  dataResposta    DateTime? @map("data_resposta") @db.Date
+  registradoSei   Boolean   @default(false) @map("registrado_sei")
+  criadoEm        DateTime  @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("prazo_processo")
+}
+
+model EventoProcesso {
+  id             Int      @id @default(autoincrement())
+  caixaEntradaId Int      @map("caixa_entrada_id")
+  tipo           String   @db.VarChar(50)
+  descricao      String?  @db.Text
+  autor          String?  @db.VarChar(255)
+  dadosJson      String?  @map("dados_json") @db.Text
+  criadoEm       DateTime @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("evento_processo")
+}
+
+model Notificacao {
+  id             Int       @id @default(autoincrement())
+  caixaEntradaId Int?      @map("caixa_entrada_id")
+  tipo           String    @db.VarChar(50)
+  titulo         String    @db.VarChar(255)
+  descricao      String?   @db.Text
+  lida           Boolean   @default(false)
+  criadoEm       DateTime  @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada? @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@index([tipo])
+  @@index([lida])
+  @@map("notificacao")
+}
+
+// ==============================================================================
+// Cache e consulta unificada
+// ==============================================================================
+
+model CacheSei {
+  id           Int      @id @default(autoincrement())
+  chave        String   @unique @db.VarChar(255)
+  valorJson    String   @map("valor_json") @db.Text
+  tamanho      Int?
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @default(now()) @updatedAt @map("atualizado_em")
+
+  @@map("cache_sei")
+}
+
+model ConsultaUnificada {
+  id                    Int       @id @default(autoincrement())
+  tipo                  String    @db.VarChar(20)
+  numeroSei             String?   @map("numero_sei") @db.VarChar(50)
+  numeroLimpo           String?   @map("numero_limpo") @db.VarChar(30)
+  idProcedimento        String?   @map("id_procedimento") @db.VarChar(30)
+  idRelatorio           String?   @map("id_relatorio") @db.VarChar(60)
+  razaoSocial           String?   @map("razao_social") @db.VarChar(255)
+  cnpjCpf               String?   @map("cnpj_cpf") @db.VarChar(20)
+  agenteRegulado        String?   @map("agente_regulado") @db.VarChar(120)
+  municipio             String?   @db.VarChar(120)
+  ano                   String?   @db.VarChar(10)
+  situacao              String?   @db.VarChar(60)
+  faseAtual             String?   @map("fase_atual") @db.VarChar(50)
+  dataCriacaoSei        DateTime? @map("data_criacao_sei") @db.Date
+  dataUltimaAcao        DateTime? @map("data_ultima_acao") @db.Date
+  caixaEntradaId        Int?      @map("caixa_entrada_id")
+  datasSincronizadasEm  DateTime? @map("datas_sincronizadas_em")
+  atualizadoEm          DateTime  @default(now()) @updatedAt @map("atualizado_em")
+
+  caixaEntrada CaixaEntrada? @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([tipo])
+  @@index([numeroSei])
+  @@index([numeroLimpo])
+  @@index([idRelatorio])
+  @@index([cnpjCpf])
+  @@index([agenteRegulado])
+  @@index([ano])
+  @@index([situacao])
+  @@index([caixaEntradaId])
+  @@map("consulta_unificada")
+}

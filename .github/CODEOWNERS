@@ -1,0 +1,3 @@
+# Code Owners — PRs precisam de aprovação do Tech Lead.
+# O dev não faz merge próprio nem push em main.
+* @Detran-SP/tech-leads

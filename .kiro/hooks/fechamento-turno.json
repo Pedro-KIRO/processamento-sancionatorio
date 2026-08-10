@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Fechamento do turno",
+      "trigger": "Stop",
+      "description": "Verificação única ao final do turno: testes proporcionais à mudança, segredos e documentação.",
+      "action": {
+        "type": "agent",
+        "prompt": "Se você NÃO alterou código neste turno, ignore tudo isto e não comente.\n\nSe alterou, faça as três checagens abaixo de uma vez, sem repetir o que já verificou durante o turno:\n\n1. TESTES (proporcional à mudança): alteração pequena e localizada, rode só os testes do arquivo afetado (ex.: `python -m pytest tests/test_x.py -q`). Alteração que cruza camadas (modelo de dados, endpoint, contrato de API, componente compartilhado), rode a suíte inteira: `python -m pytest -q` em backend/ e/ou `npm test` em frontend/ (para o npm, primeiro: $env:Path = [Environment]::GetEnvironmentVariable(\"Path\",\"Machine\") + \";\" + [Environment]::GetEnvironmentVariable(\"Path\",\"User\")). Corrija falhas antes de finalizar.\n\n2. SEGREDOS: confira que os arquivos alterados não têm valor sensível embutido (client_secret, senha, token, chave de API, connection string com senha). Se houver, alerte e mova para backend/.env.\n\n3. DOCUMENTAÇÃO: só se o resultado final mudar arquitetura, endpoint, modelo de dados, configuração, forma de rodar, contagem de testes ou roadmap — atualize `docs/tecnica/documentacao-tecnica.md` e acrescente UMA linha na seção 14. Mudança interna que não afeta nada disso não precisa de documentação.\n\nRelate em no máximo 3 linhas, só o resultado. Se tudo passou e nada precisou de ajuste, uma linha basta."
+      }
+    }
+  ]
+}
