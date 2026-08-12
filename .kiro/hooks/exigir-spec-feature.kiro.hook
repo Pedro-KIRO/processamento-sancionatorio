@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Exigir Spec para Features",
+  "description": "Antes de qualquer escrita em arquivo, verifica se existe uma spec para funcionalidades novas. Se o dev está criando módulos/controllers/services sem spec, orienta a criar uma primeiro.",
+  "version": "1",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "write"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Se o usuário está pedindo para criar uma funcionalidade nova de negócio (novo módulo, nova tela, novo endpoint com regra de negócio) e NÃO existe uma spec em .kiro/specs/ para essa funcionalidade, NÃO prossiga com a escrita. Oriente o usuário a usar '/nova-funcionalidade' para criar a spec primeiro. Se é um ajuste simples, bugfix, ou se já existe uma spec, prossiga normalmente."
+  }
+}

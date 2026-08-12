@@ -1,0 +1,13 @@
+{
+  "name": "Validar nomenclatura de arquivo",
+  "version": "1.0.0",
+  "description": "Verifica se arquivos TypeScript criados seguem kebab-case e estão na pasta correta do domínio.",
+  "when": {
+    "type": "fileCreated",
+    "patterns": ["apps/**/*.ts", "apps/**/*.tsx"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Verifique se o arquivo recém-criado segue as convenções: (1) nome em kebab-case (sem PascalCase, sem camelCase, sem underscores no nome do arquivo), (2) está dentro de um módulo de domínio em apps/api/src/app/<dominio>/ ou em apps/web/src/, (3) não está em uma pasta genérica como 'utils/' ou 'helpers/'. Se violar alguma regra, alerte o dev e sugira o nome/local correto."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "name": "Build após Task",
+  "description": "Roda o build do backend e frontend automaticamente após cada task de spec ser concluída. Se falhar, o dev precisa corrigir antes de prosseguir.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "npm run build:api",
+    "timeout": 120
+  }
+}

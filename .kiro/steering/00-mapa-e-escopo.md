@@ -7,6 +7,12 @@ inclusion: always
 Este arquivo é curto de propósito: ele entra no contexto a cada turno. As
 referências grandes ficam fora e são carregadas só quando o assunto exige.
 
+> **Migração para o padrão DTI em andamento.** O mapa abaixo descreve o backend
+> Python (`backend/app/`), que continua no ar. O backend novo em NestJS vive em
+> `apps/api/` e assume os domínios já portados; o frontend está em `apps/web/`.
+> Ao mexer num domínio, confirme em qual dos dois ele já está antes de editar.
+> Layout de destino: `.kiro/steering/structure.md`.
+
 ## Como trabalhar (economia de tempo e de créditos)
 
 1. **Não reexplore o projeto.** Use o mapa abaixo para ir direto ao arquivo.

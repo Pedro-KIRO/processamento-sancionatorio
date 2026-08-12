@@ -1,0 +1,13 @@
+{
+  "name": "Validar nome da branch",
+  "version": "1.0.0",
+  "description": "Verifica se o nome da branch segue o padrão feat/, fix/, docs/, refactor/ ou chore/ antes de operações de push.",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Se o comando sendo executado contém 'git push' ou 'git checkout -b', verifique se o nome da branch segue o padrão obrigatório: feat/<descricao>, fix/<descricao>, docs/<descricao>, refactor/<descricao> ou chore/<descricao>. O nome deve ser kebab-case, sem acentos, sem espaços, curto e descritivo. Se o nome estiver fora do padrão, BLOQUEIE a operação e explique a regra. Se for um push para main, BLOQUEIE e explique que push direto em main é proibido. Se o comando não for git push nem git checkout -b, ignore e permita a execução."
+  }
+}

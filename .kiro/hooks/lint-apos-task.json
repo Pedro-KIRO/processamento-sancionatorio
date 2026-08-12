@@ -1,0 +1,12 @@
+{
+  "name": "Lint após task da spec",
+  "version": "1.0.0",
+  "description": "Executa o linter TypeScript após cada task de spec ser marcada como concluída, garantindo que o código gerado segue os padrões.",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "npx tsc --noEmit --project apps/api/tsconfig.json 2>&1 | head -30"
+  }
+}
