@@ -1,0 +1,36 @@
+{
+  "name": "detran-dti-processamento",
+  "version": "0.1.0",
+  "description": "Sistema de Processamento Administrativo Sancionatório — DTI/DETRAN-SP",
+  "organization": "Detran-SP / Diretoria de Tecnologia da Informação",
+  "sistema": "processamento",
+  "baseadoEm": {
+    "template": "detran-dti-platform-template",
+    "templateVersion": "1.0.0"
+  },
+  "stack": {
+    "runtime": "Node.js >= 20",
+    "backend": "NestJS 10 + TypeScript 5.4",
+    "frontend": "React 18 + Vite 5 + MUI 6",
+    "orm": "Prisma 5",
+    "database": "PostgreSQL 16",
+    "auth": "Microsoft Entra ID (MSAL Browser)",
+    "containerization": "Docker + docker-compose",
+    "environment": "WSL 2 (Ubuntu 22.04)"
+  },
+  "integracoes": [
+    "SEI (API REST)",
+    "SharePoint / Microsoft Graph",
+    "Gestão de Acessos (schema gestao_acessos_v2, somente leitura)"
+  ],
+  "compatibility": {
+    "kiroMinVersion": "1.0.0",
+    "nodeMinVersion": "20.0.0",
+    "dockerMinVersion": "24.0.0",
+    "wslVersion": "Ubuntu 22.04"
+  },
+  "migracao": {
+    "status": "em andamento",
+    "observacao": "Backend Python/FastAPI sendo migrado para NestJS domínio por domínio. Enquanto a migração não termina, backend/ continua no ar e apps/api assume os domínios já portados."
+  }
+}

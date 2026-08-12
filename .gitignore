@@ -1,5 +1,6 @@
 # ===== Segredos / ambiente =====
 .env
+.env.local
 *.env
 !*.env.example
 *.key
@@ -38,6 +39,9 @@ backend/static/
 Thumbs.db
 .idea/
 .vscode/
+
+# Arquivo local do tech lead (não versionar) — convenção do template DTI
+TECH_LEAD.md
 
 # ===== Artefatos locais =====
 *.log

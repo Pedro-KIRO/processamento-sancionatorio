@@ -1,22 +1,33 @@
-# Docker Compose para desenvolvimento local.
-# Sobe o PostgreSQL, o backend (FastAPI) e o frontend (React/Vite).
+# Docker Compose para DESENVOLVIMENTO LOCAL.
 #
-# Pré-requisito: Docker Desktop instalado.
-# Uso: docker-compose up -d
+# Sobe o PostgreSQL 16 e a API NestJS. O frontend roda fora do Docker
+# (`npm run dev:web`) porque o hot reload do Vite é mais rápido assim.
 #
-# O projeto roda hoje sem Docker (SQLite + uvicorn direto); este arquivo
-# prepara a migração para o padrão DTI sem afetar o modo atual.
+# Uso: docker compose up -d
+#
+# Conforme .kiro/steering/onboarding-fase0.md, o Docker deve estar instalado
+# DENTRO do WSL (via apt), não via Docker Desktop.
+#
+# Durante a migração, o backend Python continua sendo executado à parte
+# (uvicorn na porta 8000) e a API NestJS repassa para ele os caminhos ainda
+# não portados. Ver apps/api/src/app/legacy/.
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: processamento-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-detran}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-detran_local}
       POSTGRES_DB: ${POSTGRES_DB:-processamento}
+      TZ: America/Sao_Paulo
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Cria o schema gestao_acessos_v2 local na PRIMEIRA subida do volume.
+      # Sem ele o PermissionsModule falha no construtor e a API não sobe.
+      # Para reaplicar após editar o .sql: docker compose down -v
+      - ./prisma/dev:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-detran}"]
       interval: 5s
@@ -25,11 +36,19 @@ services:
 
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: processamento-api
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-detran}:${POSTGRES_PASSWORD:-detran_local}@postgres:5432/${POSTGRES_DB:-processamento}
-      AUTH_ENABLED: "false"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-detran}:${POSTGRES_PASSWORD:-detran_local}@postgres:5432/${POSTGRES_DB:-processamento}?schema=processamento
+      PERMISSIONS_DATABASE_URL: ${PERMISSIONS_DATABASE_URL:-postgresql://detran:detran_local@postgres:5432/processamento?schema=gestao_acessos_v2}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      DEV_USER: ${DEV_USER:-}
+      PORT: 3001
+      TZ: America/Sao_Paulo
+      # Ponte de migração: host.docker.internal alcança o uvicorn rodando no host.
+      LEGACY_API_URL: ${LEGACY_API_URL:-http://host.docker.internal:8080}
+      LEGACY_PROXY_ENABLED: ${LEGACY_PROXY_ENABLED:-true}
       SEI_TOKEN_URL: ${SEI_TOKEN_URL:-}
       SEI_CLIENT_ID: ${SEI_CLIENT_ID:-}
       SEI_CLIENT_SECRET: ${SEI_CLIENT_SECRET:-}
@@ -37,28 +56,20 @@ services:
       SEI_SIGLA_SISTEMA: ${SEI_SIGLA_SISTEMA:-}
       SEI_IDENTIFICACAO_SERVICO: ${SEI_IDENTIFICACAO_SERVICO:-}
       SEI_TRACE_ID: ${SEI_TRACE_ID:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     ports:
-      - "8000:8000"
-    volumes:
-      - ./backend/app:/app/app
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  web:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    environment:
-      VITE_API_URL: http://localhost:8000
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend/src:/app/src
-    depends_on:
-      - api
-    command: npm run dev -- --host 0.0.0.0
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   postgres_data:

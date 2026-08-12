@@ -1,3 +1,6 @@
-# Code Owners — PRs precisam de aprovação do Tech Lead.
+# Code Owners — Plataforma DTI / DETRAN-SP
+# Qualquer alteração em qualquer arquivo requer aprovação de um tech lead.
 # O dev não faz merge próprio nem push em main.
-* @Detran-SP/tech-leads
+# Ref: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+* @Detran-SP/kiro-leads

@@ -17,8 +17,13 @@
 ::
 :: Chamado com qualquer argumento, termina sem perguntar nada (e o que o
 :: dev.bat e o reiniciar_site.bat fazem).
+::
+:: A 3001 entrou na lista com a API NestJS. Faltando ela, o dev.bat reiniciava e
+:: a API antiga continuava de pe na porta -- o Nest subia em outra porta e o
+:: proxy do Vite passava a falar com a instancia velha.
 
-call :matar 8080 Backend
+call :matar 8080 "Backend legado (FastAPI)"
+call :matar 3001 "API (NestJS)"
 call :matar 5173 Frontend
 
 if "%~1"=="" (

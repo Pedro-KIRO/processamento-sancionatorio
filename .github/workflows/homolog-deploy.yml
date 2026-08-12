@@ -1,0 +1,131 @@
+# ===================================================================
+# Processamento Sancionatório — CI/CD Homologação
+# Trigger: workflow_dispatch (manual).
+# Job 1: build + push das imagens para o GHCR (ubuntu-latest)
+# Job 2: deploy na VM via self-hosted runner (label: homolog)
+# ===================================================================
+# PRÉ-REQUISITOS ainda não atendidos (ver README):
+#   - repositório na org Detran-SP (o GHCR aponta para ghcr.io/detran-sp)
+#   - runner self-hosted com o label "homolog" registrado
+#   - /srv/detran/sistemas/processamento/.env provisionado na VM
+# Enquanto isso, este workflow existe mas não deve ser disparado.
+# ===================================================================
+
+name: Deploy Homologacao
+
+on:
+  workflow_dispatch:
+  # Para ativar deploy automatico em push na main, descomente abaixo
+  # e remova o workflow_dispatch acima:
+  # push:
+  #   branches: [main]
+  #   paths-ignore:
+  #     - '*.md'
+  #     - '.kiro/**'
+  #     - '.github/CODEOWNERS'
+  #     - 'docs/**'
+  #     - 'scripts/**'
+  #     - '.env.example'
+  #     - '.gitignore'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACK: ghcr.io/detran-sp/detran-dti-processamento-back
+  IMAGE_FRONT: ghcr.io/detran-sp/detran-dti-processamento-front
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push — Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACK }}:latest
+            ${{ env.IMAGE_BACK }}:${{ github.sha }}
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push — Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONT }}:latest
+            ${{ env.IMAGE_FRONT }}:${{ github.sha }}
+          build-args: |
+            VITE_ENTRA_TENANT_ID=${{ vars.VITE_ENTRA_TENANT_ID }}
+            VITE_ENTRA_CLIENT_ID=${{ vars.VITE_ENTRA_CLIENT_ID }}
+            VITE_REDIRECT_URI=${{ vars.VITE_REDIRECT_URI }}
+            VITE_BASE_PATH=${{ vars.VITE_BASE_PATH }}
+
+  deploy:
+    runs-on: [self-hosted, homolog]
+    needs: build-and-push
+
+    steps:
+      - name: Pull das novas imagens
+        run: |
+          docker pull ${{ env.IMAGE_BACK }}:latest
+          docker pull ${{ env.IMAGE_FRONT }}:latest
+
+      - name: Deploy com docker compose
+        run: |
+          cd /srv/detran/sistemas/processamento
+          docker compose -f homolog.docker-compose.yml up -d --force-recreate
+
+      - name: Aguardar healthcheck do backend
+        run: |
+          echo "Aguardando backend ficar saudável..."
+          for i in $(seq 1 30); do
+            if docker inspect --format='{{.State.Health.Status}}' processamento-back 2>/dev/null | grep -q healthy; then
+              echo "Backend saudável!"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timeout aguardando healthcheck"
+          docker logs processamento-back --tail 30
+          exit 1
+
+      - name: Executar migrations do Prisma
+        continue-on-error: true
+        run: |
+          echo "Executando migrations..."
+          if docker exec processamento-back npx prisma migrate deploy --schema=prisma/schema.prisma; then
+            echo "Migrations aplicadas com sucesso"
+          else
+            echo "Migrations falharam — pode ser primeira implantacao ou migration pendente."
+            echo "Verificar: docker exec processamento-back npx prisma migrate status --schema=prisma/schema.prisma"
+            echo "Banco novo: docker exec processamento-back npx prisma db push --schema=prisma/schema.prisma"
+          fi
+
+      - name: Recarregar Nginx
+        continue-on-error: true
+        run: |
+          docker exec detran-nginx nginx -s reload 2>/dev/null || true
+
+      - name: Limpar imagens antigas
+        run: docker image prune -f
+
+      - name: Reiniciar Nginx para resolver DNS
+        run: docker restart detran-nginx

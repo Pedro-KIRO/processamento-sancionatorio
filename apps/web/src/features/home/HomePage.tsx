@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { apiGet } from '../../api/client'
 import { Icone } from '../../components/Icone'
+import { MINHA_AREA_URL } from '../../components/SeiLinkGuard'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { AlertasInternos } from './AlertasInternos'
 import { listarCaixaEntrada } from '../caixaEntrada/api'
@@ -181,20 +182,19 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Aviso sobre login no SEI */}
+      {/* Orientação sobre o primeiro acesso ao SEI nesta aba */}
       <div className="flex items-start gap-3 bg-secondary-fixed/20 border border-secondary-container/30 rounded-lg px-4 py-3">
         <Icone nome="info" className="text-secondary text-[20px] mt-0.5 shrink-0" />
         <p className="text-body-md text-on-surface-variant">
-          Para abrir processos diretamente no SEI, é necessário estar logado na{' '}
+          No primeiro link para o SEI nesta aba, o aplicativo confirmará se você já acessou a{' '}
           <a
-            href="https://plataforma.sp.gov.br/x/mdpdd/minha-area/list"
+            href={MINHA_AREA_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="text-primary font-semibold hover:underline"
           >
-            Plataforma SP (Minha Área)
-          </a>{' '}
-          antes de clicar no número SEI.
+            Minha Área SP
+          </a>.
         </p>
       </div>
 

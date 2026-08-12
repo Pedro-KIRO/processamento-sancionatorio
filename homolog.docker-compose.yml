@@ -1,0 +1,47 @@
+# ===================================================================
+# Processamento Sancionatório — Docker Compose (Homologação)
+# Deploy: /srv/detran/sistemas/processamento/homolog.docker-compose.yml
+# ===================================================================
+# Convenção obrigatória da plataforma:
+#   serviço backend:  processamento-back   porta interna: 3001
+#   serviço frontend: processamento-front  porta interna: 3000
+#
+# O .env fica ao lado deste arquivo na VM e NÃO é versionado.
+# Precisa conter, no mínimo: DATABASE_URL, PERMISSIONS_DATABASE_URL,
+# AUTH_MODE=sso, ENTRA_*, e as credenciais do SEI e do Graph.
+# ===================================================================
+
+services:
+  processamento-back:
+    image: ghcr.io/detran-sp/detran-dti-processamento-back:latest
+    container_name: processamento-back
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: America/Sao_Paulo
+      # Em homologação a ponte para o backend Python legado fica DESLIGADA.
+      # Só é ligada se algum domínio ainda não tiver sido portado e o FastAPI
+      # estiver publicado na mesma rede.
+      LEGACY_PROXY_ENABLED: "false"
+    networks:
+      - detran-network-homolog
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  processamento-front:
+    image: ghcr.io/detran-sp/detran-dti-processamento-front:latest
+    container_name: processamento-front
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+    networks:
+      - detran-network-homolog
+
+networks:
+  detran-network-homolog:
+    external: true
+    name: detran-network-homolog

@@ -4,6 +4,12 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // Em homologação/produção o frontend é servido sob /<sistema>/.
+  // VITE_BASE_PATH configura o prefixo; em dev fica na raiz.
+  base:
+    process.env.NODE_ENV === 'production'
+      ? (process.env.VITE_BASE_PATH ?? '/')
+      : '/',
   server: {
     port: 5173,
     /*
@@ -18,14 +24,16 @@ export default defineConfig({
       existir. Endpoint novo passa a funcionar aqui sem ninguém mexer neste
       arquivo.
 
-      Só vale para `npm run dev`. Em produção o backend serve o build e as
-      chamadas são de mesma origem, sem proxy.
+      O destino é a API NestJS (3001), conforme o padrão da plataforma. Enquanto
+      a migração do backend Python não termina, a própria API NestJS repassa os
+      caminhos ainda não portados para o FastAPI — ver
+      `apps/api/src/app/legacy/legacy-proxy.middleware.ts`. Por isso aqui existe
+      um destino só, e ele não muda mais.
+
+      Só vale para `npm run dev`. Em produção o nginx faz o roteamento.
     */
     proxy: {
-      '/api': 'http://localhost:8080',
-      // Documentação do FastAPI, útil em desenvolvimento.
-      '/docs': 'http://localhost:8080',
-      '/openapi.json': 'http://localhost:8080',
+      '/api': 'http://localhost:3001',
     },
   },
   test: {
