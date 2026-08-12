@@ -1,12 +1,19 @@
-// Schema Prisma — espelho do modelo de dados atual (backend/app/db/models.py).
+// Schema Prisma — modelo de dados do sistema de processamento sancionatório.
 //
-// Este arquivo existe para duas finalidades:
-// 1. Quando o Docker + PostgreSQL estiver disponível, gerar as migrações com
-//    `npx prisma migrate dev`.
-// 2. Documentar o modelo relacional num formato que o template da DTI já espera.
+// Durante a migração para NestJS este schema é a fonte da verdade do banco, e
+// `backend/app/db/models.py` (SQLAlchemy) é o espelho a ser desativado. Os dois
+// precisam descrever as MESMAS 28 tabelas até o Python sair do ar: divergência
+// aqui aparece como coluna inexistente em runtime, num domínio já migrado,
+// enquanto os testes do Python continuam verdes.
 //
-// ATENÇÃO: o backend continua usando SQLAlchemy. Este schema NÃO é consumido
-// pelo código em produção hoje — é preparação para a migração futura.
+// Schema PostgreSQL próprio do domínio, conforme .kiro/steering/dados-prisma.md.
+// O schema vem da connection string (`?schema=processamento` na DATABASE_URL),
+// não de `schemas[]` — assim não é preciso o preview feature multiSchema, que
+// só se justifica quando um sistema lê mais de um schema no mesmo client. O
+// banco de permissões é outro client (ver permissions-database.service.ts).
+//
+// Fuso: America/Sao_Paulo. Os contêineres definem TZ; datas de prazo e
+// vencimento dependem disso.
 
 generator client {
   provider = "prisma-client-js"
@@ -22,32 +29,37 @@ datasource db {
 // ==============================================================================
 
 model AgenteRegulado {
-  id          Int       @id @default(autoincrement())
-  tipo        String?   @db.VarChar(50)
-  segmento    String?   @db.VarChar(30)
-  razaoSocial String?   @map("razao_social") @db.VarChar(255)
-  cnpjCpf     String?   @map("cnpj_cpf") @db.VarChar(20)
-  crmCrp      String?   @map("crm_crp") @db.VarChar(50)
-  logradouro  String?   @db.VarChar(255)
-  numero      String?   @db.VarChar(20)
-  bairro      String?   @db.VarChar(120)
-  cidade      String?   @db.VarChar(120)
+  id          Int     @id @default(autoincrement())
+  /// Autoescola, Peritos, ECV, EPIV...
+  tipo        String? @db.VarChar(50)
+  /// Condutores, Veiculos, Educacao
+  segmento    String? @db.VarChar(30)
+  razaoSocial String? @map("razao_social") @db.VarChar(255)
+  cnpjCpf     String? @map("cnpj_cpf") @db.VarChar(20)
+  crmCrp      String? @map("crm_crp") @db.VarChar(50)
+  logradouro  String? @db.VarChar(255)
+  numero      String? @db.VarChar(20)
+  bairro      String? @db.VarChar(120)
+  cidade      String? @db.VarChar(120)
 
   processos  Processo[]
   cautelares Cautelar[]
+  relatorios Relatorio[]
 
   @@index([cnpjCpf])
   @@map("agente_regulado")
 }
 
 model Relatorio {
-  id                 Int       @id @default(autoincrement())
-  idRelatorioOrigem  String?   @map("id_relatorio_origem") @db.VarChar(50)
-  numeroSei          String?   @map("numero_sei") @db.VarChar(50)
-  agenteId           Int?      @map("agente_id")
-  tipoDocumento      String?   @map("tipo_documento") @db.VarChar(120)
-  dataRecebimento    DateTime? @map("data_recebimento") @db.Date
-  conteudoHtml       String?   @map("conteudo_html") @db.Text
+  id                Int       @id @default(autoincrement())
+  idRelatorioOrigem String?   @map("id_relatorio_origem") @db.VarChar(50)
+  numeroSei         String?   @map("numero_sei") @db.VarChar(50)
+  agenteId          Int?      @map("agente_id")
+  tipoDocumento     String?   @map("tipo_documento") @db.VarChar(120)
+  dataRecebimento   DateTime? @map("data_recebimento") @db.Date
+  conteudoHtml      String?   @map("conteudo_html") @db.Text
+
+  agente AgenteRegulado? @relation(fields: [agenteId], references: [id])
 
   @@index([idRelatorioOrigem])
   @@index([numeroSei])
@@ -55,62 +67,101 @@ model Relatorio {
 }
 
 model CaixaEntrada {
-  id                       Int       @id @default(autoincrement())
-  idRelatorio              String?   @map("id_relatorio") @db.VarChar(50)
-  numeroSei                String?   @map("numero_sei") @db.VarChar(50)
-  protocoloLimpo           String?   @unique @map("protocolo_limpo") @db.VarChar(30)
-  idProcedimento           String?   @map("id_procedimento") @db.VarChar(30)
-  razaoSocial              String?   @map("razao_social") @db.VarChar(255)
-  agenteRegulado           String?   @map("agente_regulado") @db.VarChar(120)
-  agenteOrigem             String?   @map("agente_origem") @db.VarChar(120)
-  segmento                 String?   @db.VarChar(30)
-  municipio                String?   @db.VarChar(120)
-  superintendencia         String?   @db.VarChar(120)
-  totalApontamentos        Int?      @map("total_apontamentos")
-  totalItensAvaliados      Int?      @map("total_itens_avaliados")
-  tipoDocumento            String?   @map("tipo_documento") @db.VarChar(120)
-  cnpjCpf                  String?   @map("cnpj_cpf") @db.VarChar(20)
-  dataRecebimento          DateTime? @map("data_recebimento") @db.Date
-  dataRemetido             DateTime? @map("data_remetido") @db.Date
-  dataInicioFiscalizacao   DateTime? @map("data_inicio_fiscalizacao") @db.Date
-  statusTriagem            String?   @default("pendente") @map("status_triagem") @db.VarChar(30)
-  conteudoHtml             String?   @map("conteudo_html") @db.Text
-  numeroProcessoSei        String?   @map("numero_processo_sei") @db.VarChar(50)
-  idProcedimentoProcesso   String?   @map("id_procedimento_processo") @db.VarChar(30)
-  dataInstauracao          DateTime? @map("data_instauracao") @db.Date
-  idUnidadeSei             String?   @map("id_unidade_sei") @db.VarChar(30)
-  verificadoEm             DateTime? @map("verificado_em")
+  id                     Int       @id @default(autoincrement())
+  idRelatorio            String?   @map("id_relatorio") @db.VarChar(50)
+  numeroSei              String?   @map("numero_sei") @db.VarChar(50)
+  protocoloLimpo         String?   @unique @map("protocolo_limpo") @db.VarChar(30)
+  idProcedimento         String?   @map("id_procedimento") @db.VarChar(30)
+  razaoSocial            String?   @map("razao_social") @db.VarChar(255)
+  /// Classe consolidada do agente (Autoescola, Perito, Desmonte, Despachante,
+  /// ECV, Estampadora).
+  agenteRegulado         String?   @map("agente_regulado") @db.VarChar(120)
+  /// Nome como veio da listaDesignacao ("Médicos", "Clínica de Medicina do
+  /// Tráfego"...). A classe consolidada não basta para instaurar: o SEI tem
+  /// tipos de procedimento distintos para Clínica, Médico e Psicólogo.
+  agenteOrigem           String?   @map("agente_origem") @db.VarChar(120)
+  segmento               String?   @db.VarChar(30)
+  municipio              String?   @db.VarChar(120)
+  superintendencia       String?   @db.VarChar(120)
+  /// Apontamentos do checklist de fiscalização (não conformidades).
+  totalApontamentos      Int?      @map("total_apontamentos")
+  totalItensAvaliados    Int?      @map("total_itens_avaliados")
+  tipoDocumento          String?   @map("tipo_documento") @db.VarChar(120)
+  cnpjCpf                String?   @map("cnpj_cpf") @db.VarChar(20)
+  dataRecebimento        DateTime? @map("data_recebimento") @db.Date
+  dataRemetido           DateTime? @map("data_remetido") @db.Date
+  dataInicioFiscalizacao DateTime? @map("data_inicio_fiscalizacao") @db.Date
+  statusTriagem          String?   @default("pendente") @map("status_triagem") @db.VarChar(30)
+  /// HTML completo do relatório — costuma passar de 1 MB por item. NUNCA
+  /// selecionar em listagem: era a causa de a Caixa de Entrada demorar a
+  /// carregar. Use `select` explícito e busque este campo só no detalhe.
+  conteudoHtml           String?   @map("conteudo_html") @db.Text
 
-  anotacoes             Anotacao[]
-  historicoDespachos    HistoricoDespacho[]
-  fasesAndamento        FaseProcessoAndamento[]
-  prazos                PrazoProcesso[]
-  eventos               EventoProcesso[]
-  notificacoes          Notificacao[]
-  consultaUnificada     ConsultaUnificada[]
+  /// Preenchidos quando o item sai da caixa por Arquivar/TAC/Instaurar. Em
+  /// Instaurar referem-se ao NOVO processo criado no SEI; em Arquivar/TAC o
+  /// processo é o mesmo (numeroSei) e ficam vazios.
+  numeroProcessoSei      String?   @map("numero_processo_sei") @db.VarChar(50)
+  idProcedimentoProcesso String?   @map("id_procedimento_processo") @db.VarChar(30)
+  dataInstauracao        DateTime? @map("data_instauracao") @db.Date
+
+  /// Unidade SEI que recebeu o processo. Evita tentativa e erro entre as 6
+  /// unidades — o SEI só permite acesso aos documentos pela unidade que tem o
+  /// processo aberto.
+  idUnidadeSei String? @map("id_unidade_sei") @db.VarChar(30)
+
+  /// Última verificação da automação de limpeza. Permite rodar em rotação (os
+  /// mais antigos primeiro) em vez de reverificar tudo a cada ciclo.
+  verificadoEm DateTime? @map("verificado_em")
+
+  /// Analista responsável (atribuído na instauração, editável por coordenador
+  /// ou chefe de divisão).
+  responsavelId Int? @map("responsavel_id")
+
+  /// Priorização (★) da Coordenação: sobe o processo no ordenamento das filas e
+  /// dá destaque visual. NÃO altera prazo legal nenhum.
+  prioritario             Boolean   @default(false)
+  prioridadeJustificativa String?   @map("prioridade_justificativa") @db.Text
+  prioridadeDefinidaPor   String?   @map("prioridade_definida_por") @db.VarChar(255)
+  prioridadeDefinidaEm    DateTime? @map("prioridade_definida_em")
+
+  responsavel        Usuario?                @relation("CaixaEntradaResponsavel", fields: [responsavelId], references: [id])
+  anotacoes          Anotacao[]
+  historicoDespachos HistoricoDespacho[]
+  fasesAndamento     FaseProcessoAndamento[]
+  prazos             PrazoProcesso[]
+  eventos            EventoProcesso[]
+  notificacoes       Notificacao[]
+  consultaUnificada  ConsultaUnificada[]
+  cautelares         Cautelar[]
+  recursos           RecursoProcesso[]
+  advogados          AdvogadoProcesso[]
 
   @@index([idRelatorio])
   @@index([numeroSei])
   @@index([protocoloLimpo])
+  @@index([responsavelId])
   @@map("caixa_entrada")
 }
 
 model Processo {
-  id                  Int       @id @default(autoincrement())
-  numeroSei           String?   @map("numero_sei") @db.VarChar(50)
-  agenteId            Int?      @map("agente_id")
-  segmento            String?   @db.VarChar(30)
-  dataInstauracao     DateTime? @map("data_instauracao") @db.Date
-  situacaoProcessual  String?   @map("situacao_processual") @db.VarChar(120)
-  faseAtual           String?   @map("fase_atual") @db.VarChar(120)
-  criadoEm            DateTime  @default(now()) @map("criado_em")
+  id                 Int       @id @default(autoincrement())
+  numeroSei          String?   @map("numero_sei") @db.VarChar(50)
+  agenteId           Int?      @map("agente_id")
+  segmento           String?   @db.VarChar(30)
+  dataInstauracao    DateTime? @map("data_instauracao") @db.Date
+  situacaoProcessual String?   @map("situacao_processual") @db.VarChar(120)
+  faseAtual          String?   @map("fase_atual") @db.VarChar(120)
+  responsavelId      Int?      @map("responsavel_id")
+  criadoEm           DateTime  @default(now()) @map("criado_em")
 
-  agente     AgenteRegulado? @relation(fields: [agenteId], references: [id])
-  fases      FaseProcesso[]
-  prazos     Prazo[]
-  cautelares Cautelar[]
+  agente      AgenteRegulado? @relation(fields: [agenteId], references: [id])
+  responsavel Usuario?        @relation("ProcessoResponsavel", fields: [responsavelId], references: [id])
+  fases       FaseProcesso[]
+  prazos      Prazo[]
+  cautelares  Cautelar[]
 
   @@index([numeroSei])
+  @@index([responsavelId])
   @@map("processo")
 }
 
@@ -138,18 +189,59 @@ model Prazo {
   @@map("prazo")
 }
 
+/// Medida cautelar aplicada ao agente regulado.
+///
+/// Competência exclusiva do Coordenador Geral (art. 62, § único, da Lei
+/// 10.177/1998). Ciclo: instauração com cautelar → fila do Coordenador Geral →
+/// concordância (assinatura) ou recusa (volta à caixa de entrada) → certidão de
+/// bloqueio → acompanhamento do prazo → renovação ou revogação (com certidão de
+/// desbloqueio).
 model Cautelar {
-  id         Int       @id @default(autoincrement())
-  processoId Int?      @map("processo_id")
-  agenteId   Int?      @map("agente_id")
-  tipo       String?   @db.VarChar(120)
-  dataInicio DateTime? @map("data_inicio") @db.Date
-  dataFim    DateTime? @map("data_fim") @db.Date
-  situacao   String?   @db.VarChar(30)
+  id             Int       @id @default(autoincrement())
+  processoId     Int?      @map("processo_id")
+  /// Vínculo com o item da caixa de entrada, que é onde o fluxo real do app
+  /// vive (a tabela `processo` não é populada pela instauração). Sem isto a
+  /// tela de cautelares não cruzava com defesa juntada nem abria o processo.
+  caixaEntradaId Int?      @map("caixa_entrada_id")
+  agenteId       Int?      @map("agente_id")
+  tipo           String?   @db.VarChar(120)
+  dataInicio     DateTime? @map("data_inicio") @db.Date
+  dataFim        DateTime? @map("data_fim") @db.Date
+  situacao       String?   @db.VarChar(30)
 
-  processo Processo?       @relation(fields: [processoId], references: [id])
-  agente   AgenteRegulado? @relation(fields: [agenteId], references: [id])
+  prazoDias          Int?    @map("prazo_dias")
+  fundamentacao      String? @db.Text
+  unidadeResponsavel String? @map("unidade_responsavel") @db.VarChar(200)
+  numeroSeiCertidao  String? @map("numero_sei_certidao") @db.VarChar(50)
+  renovadaDeId       Int?    @map("renovada_de_id")
 
+  // --- Concordância do Coordenador Geral ---
+  /// pendente | aprovada | recusada
+  aprovacao          String?   @default("pendente") @db.VarChar(20)
+  aprovadaPor        String?   @map("aprovada_por") @db.VarChar(255)
+  aprovadaEm         DateTime? @map("aprovada_em")
+  motivoRecusa       String?   @map("motivo_recusa") @db.Text
+  /// Certidão de bloqueio criada e aguardando assinatura no SEI.
+  pendenteAssinatura Boolean   @default(false) @map("pendente_assinatura")
+  /// Link do bloco de assinatura no SEI, para a ação "assinar" da tela.
+  linkBlocoSei       String?   @map("link_bloco_sei") @db.VarChar(500)
+
+  // --- Revogação ---
+  dataRevogacao                DateTime? @map("data_revogacao") @db.Date
+  revogadaPor                  String?   @map("revogada_por") @db.VarChar(255)
+  motivoRevogacao              String?   @map("motivo_revogacao") @db.Text
+  numeroSeiCertidaoDesbloqueio String?   @map("numero_sei_certidao_desbloqueio") @db.VarChar(50)
+
+  criadoEm     DateTime  @default(now()) @map("criado_em")
+  atualizadoEm DateTime? @updatedAt @map("atualizado_em")
+
+  processo     Processo?       @relation(fields: [processoId], references: [id])
+  caixaEntrada CaixaEntrada?   @relation(fields: [caixaEntradaId], references: [id])
+  agente       AgenteRegulado? @relation(fields: [agenteId], references: [id])
+  renovadaDe   Cautelar?       @relation("CautelarRenovacao", fields: [renovadaDeId], references: [id])
+  renovacoes   Cautelar[]      @relation("CautelarRenovacao")
+
+  @@index([caixaEntradaId])
   @@map("cautelar")
 }
 
@@ -157,6 +249,7 @@ model Feriado {
   id        Int      @id @default(autoincrement())
   data      DateTime @db.Date
   descricao String?  @db.VarChar(120)
+  /// nacional / estadual / municipal
   tipo      String?  @db.VarChar(30)
 
   @@index([data])
@@ -176,18 +269,26 @@ model Anotacao {
   @@map("anotacao")
 }
 
+/// Registro de cada tentativa de despacho no SEI (Arquivar/TAC/Instaurar).
+///
+/// Guarda toda tentativa, com sucesso ou erro, para dar rastreabilidade quando a
+/// API do SEI falha: o usuário vê se algo já foi criado antes de tentar de novo,
+/// evitando processo ou documento duplicado.
 model HistoricoDespacho {
-  id                       Int      @id @default(autoincrement())
-  caixaEntradaId           Int      @map("caixa_entrada_id")
-  tipo                     String   @db.VarChar(20)
-  status                   String   @db.VarChar(20)
-  mensagem                 String?  @db.Text
-  numeroSeiResultado       String?  @map("numero_sei_resultado") @db.VarChar(50)
-  idProcedimentoResultado  String?  @map("id_procedimento_resultado") @db.VarChar(30)
-  documentoFormatado       String?  @map("documento_formatado") @db.VarChar(30)
-  avisos                   String?  @db.Text
-  autor                    String?  @db.VarChar(255)
-  criadoEm                 DateTime @default(now()) @map("criado_em")
+  id                      Int      @id @default(autoincrement())
+  caixaEntradaId          Int      @map("caixa_entrada_id")
+  /// arquivar / tac / instaurar
+  tipo                    String   @db.VarChar(20)
+  /// sucesso / erro_temporario / erro_definitivo
+  status                  String   @db.VarChar(20)
+  mensagem                String?  @db.Text
+  numeroSeiResultado      String?  @map("numero_sei_resultado") @db.VarChar(50)
+  idProcedimentoResultado String?  @map("id_procedimento_resultado") @db.VarChar(30)
+  documentoFormatado      String?  @map("documento_formatado") @db.VarChar(30)
+  /// Avisos concatenados, separados por "\n".
+  avisos                  String?  @db.Text
+  autor                   String?  @db.VarChar(255)
+  criadoEm                DateTime @default(now()) @map("criado_em")
 
   caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
 
@@ -195,39 +296,60 @@ model HistoricoDespacho {
   @@map("historico_despacho")
 }
 
+/// Cadastro local de usuários do sistema.
+///
+/// ATENÇÃO: NÃO é a fonte de autorização. Identidade e permissões vêm do schema
+/// gestao_acessos_v2 (ver .kiro/steering/permissionamento.md). Esta tabela existe
+/// para vínculos do domínio — atribuição de responsável, por exemplo. A coluna
+/// `perfil` é herança do modelo antigo e sai quando a migração terminar.
 model Usuario {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique @db.VarChar(255)
-  nome      String?  @db.VarChar(255)
-  idUnidade String?  @map("id_unidade") @db.VarChar(30)
-  perfil    String?  @db.VarChar(30)
-  ativo     Boolean  @default(true)
+  id        Int     @id @default(autoincrement())
+  email     String  @unique @db.VarChar(255)
+  nome      String? @db.VarChar(255)
+  idUnidade String? @map("id_unidade") @db.VarChar(30)
+  /// analista / chefe_servico / chefe_divisao / coordenador / coordenador_geral /
+  /// consultoria_juridica — legado, ver docstring.
+  perfil    String? @db.VarChar(30)
+  ativo     Boolean @default(true)
+
+  caixasResponsavel    CaixaEntrada[] @relation("CaixaEntradaResponsavel")
+  processosResponsavel Processo[]     @relation("ProcessoResponsavel")
 
   @@map("usuario")
 }
 
 // ==============================================================================
-// Tabelas de referência (config)
+// Tabelas de referência (migradas das listas do SharePoint)
+// Dados raramente mudam; populados por script de seed/migração.
 // ==============================================================================
 
+/// Mapeamento agenteRegulado → idUnidade no SEI. Origem: listaUsuarios (CPSAR).
+/// Uso: consultar documentos sabendo qual unidade tem acesso, sem tentativa e
+/// erro entre as 6 unidades possíveis.
 model ConfigUnidade {
-  id               Int    @id @default(autoincrement())
-  agenteRegulado   String @map("agente_regulado") @db.VarChar(120)
-  idUnidade        String @map("id_unidade") @db.VarChar(30)
+  id               Int     @id @default(autoincrement())
+  agenteRegulado   String  @map("agente_regulado") @db.VarChar(120)
+  idUnidade        String  @map("id_unidade") @db.VarChar(30)
   descricaoUnidade String? @map("descricao_unidade") @db.VarChar(255)
 
   @@index([agenteRegulado])
   @@map("config_unidade")
 }
 
+/// Mapeamento agenteRegulado → idTipoProcedimento no SEI. Origem:
+/// listaCódigosAPI (CPSAR). Uso: criar o processo com o tipo correto na
+/// instauração.
 model ConfigTipoProcedimento {
-  id                  Int    @id @default(autoincrement())
-  agenteRegulado      String @unique @map("agente_regulado") @db.VarChar(120)
-  idTipoProcedimento  String @map("id_tipo_procedimento") @db.VarChar(30)
+  id                 Int    @id @default(autoincrement())
+  agenteRegulado     String @unique @map("agente_regulado") @db.VarChar(120)
+  idTipoProcedimento String @map("id_tipo_procedimento") @db.VarChar(30)
 
   @@map("config_tipo_procedimento")
 }
 
+/// Mapeamento (agenteRegulado, cargo) → idBloco no SEI. Origem:
+/// listaBlocosAssinatura (CPSAR). Uso: incluir o despacho gerado no bloco de
+/// assinatura correto.
 model ConfigBlocoAssinatura {
   id             Int    @id @default(autoincrement())
   agenteRegulado String @map("agente_regulado") @db.VarChar(120)
@@ -238,6 +360,18 @@ model ConfigBlocoAssinatura {
   @@map("config_bloco_assinatura")
 }
 
+/// Modelos de documento por (agenteRegulado, descricaoDoc).
+///
+/// `descricaoDoc` é `<função>|<rótulo>`: a função é o papel do documento no
+/// fluxo e o rótulo diferencia as variantes.
+///
+/// O coordenador edita esses textos na tela "Textos-padrão", por isso a linha
+/// guarda três coisas além do texto em uso:
+///   - `padrao`: qual variante é a padrão do app para aquela função e agente.
+///   - `htmlOriginal`: o texto como veio do SEI, para desfazer a edição.
+///   - `editadoEm`/`editadoPor`: enquanto preenchidos, a reimportação NÃO
+///     sobrescreve `templateHtml` — senão a próxima coleta apagaria o ajuste do
+///     coordenador sem aviso.
 model ConfigTemplateDespacho {
   id             Int       @id @default(autoincrement())
   agenteRegulado String    @map("agente_regulado") @db.VarChar(120)
@@ -253,11 +387,14 @@ model ConfigTemplateDespacho {
   @@map("config_template_despacho")
 }
 
+/// Mapeamento idUnidade → e-mail da unidade para acesso externo no SEI.
+/// O SEI exige o e-mail da unidade que concede o acesso; ele vai na
+/// notificação ao interessado.
 model ConfigEmailUnidade {
-  id             Int    @id @default(autoincrement())
-  idUnidade      String @unique @map("id_unidade") @db.VarChar(30)
-  agenteRegulado String @map("agente_regulado") @db.VarChar(120)
-  email          String @db.VarChar(255)
+  id             Int     @id @default(autoincrement())
+  idUnidade      String  @unique @map("id_unidade") @db.VarChar(30)
+  agenteRegulado String  @map("agente_regulado") @db.VarChar(120)
+  email          String  @db.VarChar(255)
   descricao      String? @db.VarChar(255)
 
   @@index([agenteRegulado])
@@ -266,14 +403,23 @@ model ConfigEmailUnidade {
 
 // ==============================================================================
 // Fase de vida do processo administrativo sancionatório
+//
+// Fases em ordem sequencial obrigatória (não pode pular):
+//   instauracao → aguardando_defesa → defesa_apresentada → instrucao →
+//   aguardando_alegacoes → julgamento → recurso → encerramento → encerrado
+// A fonte da verdade do fluxo é docs/negocio/fluxo-oficial-processo-sancionatorio.md.
 // ==============================================================================
 
+/// Rastreia a fase atual e o histórico de fases de um processo instaurado.
+/// Cada registro é a ENTRADA em uma fase; a fase atual é a mais recente por
+/// `dataEntrada`. Criar fase fora da sequência é bloqueado pelo backend.
 model FaseProcessoAndamento {
   id             Int       @id @default(autoincrement())
   caixaEntradaId Int       @map("caixa_entrada_id")
   fase           String    @db.VarChar(50)
   dataEntrada    DateTime  @default(now()) @map("data_entrada")
   dataSaida      DateTime? @map("data_saida")
+  /// Quem realizou a ação que avançou para esta fase.
   autor          String?   @db.VarChar(255)
   observacao     String?   @db.Text
 
@@ -283,19 +429,29 @@ model FaseProcessoAndamento {
   @@map("fase_processo_andamento")
 }
 
+/// Controle de prazos do processo (15 dias para defesa, 7 para alegações...).
+///
+/// O prazo pode ser reiniciado uma vez, quando o interessado visualiza o acesso
+/// externo — `reiniciado`/`dataReinicio` registram essa visualização, e
+/// `dataInicio` é a data em que o acesso foi disponibilizado, não a do clique.
+///
+/// Vencido sem resposta, o desfecho depende da visualização: sem ela cabe edital
+/// de citação (a fase não avança); com ela, certidão de decurso.
 model PrazoProcesso {
-  id              Int       @id @default(autoincrement())
-  caixaEntradaId  Int       @map("caixa_entrada_id")
-  fase            String    @db.VarChar(50)
-  dias            Int
-  dataInicio      DateTime  @map("data_inicio") @db.Date
-  dataVencimento  DateTime  @map("data_vencimento") @db.Date
-  reiniciado      Boolean   @default(false)
-  dataReinicio    DateTime? @map("data_reinicio") @db.Date
-  status          String    @default("em_andamento") @db.VarChar(30)
-  dataResposta    DateTime? @map("data_resposta") @db.Date
-  registradoSei   Boolean   @default(false) @map("registrado_sei")
-  criadoEm        DateTime  @default(now()) @map("criado_em")
+  id             Int       @id @default(autoincrement())
+  caixaEntradaId Int       @map("caixa_entrada_id")
+  fase           String    @db.VarChar(50)
+  dias           Int
+  dataInicio     DateTime  @map("data_inicio") @db.Date
+  dataVencimento DateTime  @map("data_vencimento") @db.Date
+  reiniciado     Boolean   @default(false)
+  dataReinicio   DateTime? @map("data_reinicio") @db.Date
+  /// em_andamento | respondido | decurso | cancelado
+  status         String    @default("em_andamento") @db.VarChar(30)
+  dataResposta   DateTime? @map("data_resposta") @db.Date
+  /// Se o SEI registrou o prazo (via POST /processos/{numero}/prazo).
+  registradoSei  Boolean   @default(false) @map("registrado_sei")
+  criadoEm       DateTime  @default(now()) @map("criado_em")
 
   caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
 
@@ -303,12 +459,89 @@ model PrazoProcesso {
   @@map("prazo_processo")
 }
 
+/// Trilha de auditoria das ações dos usuários.
+///
+/// Exigência da Documentação de Negócio v3.0: registrar usuário, data, horário,
+/// operação e documento afetado. É alimentada de forma centralizada em toda
+/// requisição que altera dados (POST/PUT/PATCH/DELETE) — fazer assim, e não
+/// endpoint a endpoint, é o que garante que nenhuma rota nova escape da trilha
+/// por esquecimento.
+model Auditoria {
+  id         Int      @id @default(autoincrement())
+  usuario    String?  @db.VarChar(255)
+  /// Data e hora da ação, no fuso de São Paulo.
+  momento    DateTime @default(now())
+  /// Verbo HTTP + caminho, ex.: "POST /cautelares/12/revogar".
+  operacao   String   @db.VarChar(255)
+  metodo     String?  @db.VarChar(10)
+  caminho    String?  @db.VarChar(500)
+  /// Primeiro segmento do caminho, para filtrar por área ("cautelares").
+  entidade   String?  @db.VarChar(60)
+  /// Id numérico presente no caminho, quando houver.
+  registroId Int?     @map("registro_id")
+  /// Documento do SEI afetado, quando a operação identifica um.
+  documento  String?  @db.VarChar(100)
+  statusHttp Int?     @map("status_http")
+
+  @@index([usuario])
+  @@index([momento])
+  @@index([operacao])
+  @@index([entidade])
+  @@map("auditoria")
+}
+
+/// Painel de recurso do processo (Documentação de Negócio v3.0).
+///
+/// Depois da Decisão I registra-se se houve interposição e conduz-se o trâmite:
+/// interposição → encaminhamento à Consultoria Jurídica → parecer → Decisão II.
+///
+/// É tabela própria, e não colunas em CaixaEntrada, porque a Decisão II pode
+/// determinar o retorno do processo a uma fase específica — o processo reentra
+/// no fluxo e pode chegar a um novo recurso, com histórico separado.
+model RecursoProcesso {
+  id             Int @id @default(autoincrement())
+  caixaEntradaId Int @map("caixa_entrada_id")
+
+  /// null = ainda não respondido; false = não houve recurso (trânsito).
+  interposto       Boolean?
+  dataInterposicao DateTime? @map("data_interposicao") @db.Date
+  registradoPor    String?   @map("registrado_por") @db.VarChar(255)
+
+  // --- Consultoria Jurídica ---
+  parecerNumeroSei String?   @map("parecer_numero_sei") @db.VarChar(50)
+  parecerEm        DateTime? @map("parecer_em") @db.Date
+  parecerPor       String?   @map("parecer_por") @db.VarChar(255)
+  parecerResumo    String?   @map("parecer_resumo") @db.Text
+
+  // --- Decisão II ---
+  /// mantida | reformada | retorno_fase
+  decisaoResultado     String?   @map("decisao_resultado") @db.VarChar(30)
+  /// Fase para onde o processo volta quando o resultado é `retorno_fase`.
+  decisaoFaseRetorno   String?   @map("decisao_fase_retorno") @db.VarChar(50)
+  decisaoFundamentacao String?   @map("decisao_fundamentacao") @db.Text
+  decisaoEm            DateTime? @map("decisao_em") @db.Date
+  decisaoPor           String?   @map("decisao_por") @db.VarChar(255)
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([caixaEntradaId])
+  @@map("recurso_processo")
+}
+
+/// Registro de cada evento relevante do processo, para rastreabilidade e BI.
+/// Alimenta a timeline visual e a exportação para Power BI.
 model EventoProcesso {
   id             Int      @id @default(autoincrement())
   caixaEntradaId Int      @map("caixa_entrada_id")
+  /// fase_avancada | prazo_definido | prazo_reiniciado | prazo_vencido |
+  /// documento_gerado | acesso_disponibilizado | defesa_juntada |
+  /// certidao_gerada | decisao_proferida | recurso_interposto | encerrado
   tipo           String   @db.VarChar(50)
   descricao      String?  @db.Text
   autor          String?  @db.VarChar(255)
+  /// Metadados extras em JSON.
   dadosJson      String?  @map("dados_json") @db.Text
   criadoEm       DateTime @default(now()) @map("criado_em")
 
@@ -318,14 +551,20 @@ model EventoProcesso {
   @@map("evento_processo")
 }
 
+/// Notificações para os usuários do sistema.
+/// Criadas pela automação de prazos ou por ações internas. O frontend consulta
+/// as não lidas para o badge do sino.
 model Notificacao {
-  id             Int       @id @default(autoincrement())
-  caixaEntradaId Int?      @map("caixa_entrada_id")
-  tipo           String    @db.VarChar(50)
-  titulo         String    @db.VarChar(255)
-  descricao      String?   @db.Text
-  lida           Boolean   @default(false)
-  criadoEm       DateTime  @default(now()) @map("criado_em")
+  id             Int      @id @default(autoincrement())
+  caixaEntradaId Int?     @map("caixa_entrada_id")
+  /// defesa_juntada | defesa_intempestiva | prazo_vencido |
+  /// prazo_proximo_vencer | fase_avancada | acesso_externo_visualizado |
+  /// acesso_nao_visualizado | documento_externo | documento_assinado
+  tipo           String   @db.VarChar(50)
+  titulo         String   @db.VarChar(255)
+  descricao      String?  @db.Text
+  lida           Boolean  @default(false)
+  criadoEm       DateTime @default(now()) @map("criado_em")
 
   caixaEntrada CaixaEntrada? @relation(fields: [caixaEntradaId], references: [id])
 
@@ -336,13 +575,26 @@ model Notificacao {
 }
 
 // ==============================================================================
-// Cache e consulta unificada
+// Cache persistente de respostas da API do SEI
 // ==============================================================================
 
+/// Cache persistente de respostas da API do SEI.
+///
+/// Documentos e andamentos já registrados no SEI não mudam. Sem cache, cada
+/// abertura de tela rebaixava tudo da API, o que deixava o app lento e
+/// sobrecarregava o SEI.
+///
+/// Duas categorias, distinguidas pelo prefixo da `chave`:
+///   - `doc:{numero}` — conteúdo de documento. Imutável depois de assinado,
+///     então não expira.
+///   - `docs:{idProcedimento}` / `hist:{idProcedimento}:{modo}` — listas que
+///     crescem conforme o processo anda. TTL curto e invalidação explícita
+///     quando o próprio app inclui documento no processo.
 model CacheSei {
   id           Int      @id @default(autoincrement())
   chave        String   @unique @db.VarChar(255)
   valorJson    String   @map("valor_json") @db.Text
+  /// Tamanho em bytes do conteúdo bruto, para diagnóstico e limpeza.
   tamanho      Int?
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @default(now()) @updatedAt @map("atualizado_em")
@@ -350,25 +602,52 @@ model CacheSei {
   @@map("cache_sei")
 }
 
+// ==============================================================================
+// Consulta Unificada (tela somente leitura)
+// ==============================================================================
+
+/// Visão consolidada de relatórios de fiscalização e processos sancionatórios.
+///
+/// Duas origens:
+///   - **relatorio**: listaDesignacao do SharePoint (site DCAN) na íntegra,
+///     inclusive fiscalizações que nunca entraram na nossa caixa de entrada.
+///     `situacao` é o statusAndamento dessa lista.
+///   - **processo**: nossa CaixaEntrada, para itens cuja triagem criou processo
+///     sancionatório. Só aqui `faseAtual` é preenchida.
+///
+/// Por que tabela própria em vez de consultar na hora: as datas vêm dos
+/// andamentos do SEI (uma chamada por linha) e a lista tem ~20 mil registros.
+/// A sincronização roda em background e a tela lê só do banco.
+///
+/// As duas datas saem do mesmo endpoint (/andamentos/completo), que devolve do
+/// mais recente para o mais antigo: `dataCriacaoSei` é o último item do array e
+/// `dataUltimaAcao` é o primeiro.
 model ConsultaUnificada {
-  id                    Int       @id @default(autoincrement())
-  tipo                  String    @db.VarChar(20)
-  numeroSei             String?   @map("numero_sei") @db.VarChar(50)
-  numeroLimpo           String?   @map("numero_limpo") @db.VarChar(30)
-  idProcedimento        String?   @map("id_procedimento") @db.VarChar(30)
-  idRelatorio           String?   @map("id_relatorio") @db.VarChar(60)
-  razaoSocial           String?   @map("razao_social") @db.VarChar(255)
-  cnpjCpf               String?   @map("cnpj_cpf") @db.VarChar(20)
-  agenteRegulado        String?   @map("agente_regulado") @db.VarChar(120)
-  municipio             String?   @db.VarChar(120)
-  ano                   String?   @db.VarChar(10)
-  situacao              String?   @db.VarChar(60)
-  faseAtual             String?   @map("fase_atual") @db.VarChar(50)
-  dataCriacaoSei        DateTime? @map("data_criacao_sei") @db.Date
-  dataUltimaAcao        DateTime? @map("data_ultima_acao") @db.Date
-  caixaEntradaId        Int?      @map("caixa_entrada_id")
-  datasSincronizadasEm  DateTime? @map("datas_sincronizadas_em")
-  atualizadoEm          DateTime  @default(now()) @updatedAt @map("atualizado_em")
+  id                   Int       @id @default(autoincrement())
+  /// "relatorio" (fiscalização) ou "processo" (sancionatório)
+  tipo                 String    @db.VarChar(20)
+  numeroSei            String?   @map("numero_sei") @db.VarChar(50)
+  /// Sem máscara, para busca.
+  numeroLimpo          String?   @map("numero_limpo") @db.VarChar(30)
+  /// ID interno do procedimento no SEI: link direto e consulta de andamentos.
+  idProcedimento       String?   @map("id_procedimento") @db.VarChar(30)
+  idRelatorio          String?   @map("id_relatorio") @db.VarChar(60)
+  razaoSocial          String?   @map("razao_social") @db.VarChar(255)
+  cnpjCpf              String?   @map("cnpj_cpf") @db.VarChar(20)
+  agenteRegulado       String?   @map("agente_regulado") @db.VarChar(120)
+  municipio            String?   @db.VarChar(120)
+  ano                  String?   @db.VarChar(10)
+  /// statusAndamento da listaDesignacao (Concluído, Avaliado, Em andamento...).
+  situacao             String?   @db.VarChar(60)
+  /// Fase do processo administrativo — só para tipo "processo".
+  faseAtual            String?   @map("fase_atual") @db.VarChar(50)
+  dataCriacaoSei       DateTime? @map("data_criacao_sei") @db.Date
+  dataUltimaAcao       DateTime? @map("data_ultima_acao") @db.Date
+  caixaEntradaId       Int?      @map("caixa_entrada_id")
+  /// Quando as datas foram buscadas no SEI pela última vez. null = nunca; usado
+  /// para enriquecer em rotação, sem repetir o que já foi feito.
+  datasSincronizadasEm DateTime? @map("datas_sincronizadas_em")
+  atualizadoEm         DateTime  @default(now()) @updatedAt @map("atualizado_em")
 
   caixaEntrada CaixaEntrada? @relation(fields: [caixaEntradaId], references: [id])
 
@@ -382,4 +661,112 @@ model ConsultaUnificada {
   @@index([situacao])
   @@index([caixaEntradaId])
   @@map("consulta_unificada")
+}
+
+// ==============================================================================
+// Advogados / Procuradores
+// ==============================================================================
+
+/// Cadastro de advogados/procuradores que representam os interessados.
+/// A OAB é a chave de deduplicação: cadastrar OAB existente devolve o registro
+/// atual em vez de criar duplicado.
+model Advogado {
+  id       Int      @id @default(autoincrement())
+  nome     String   @db.VarChar(255)
+  oab      String   @unique @db.VarChar(30)
+  email    String?  @db.VarChar(255)
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  processos AdvogadoProcesso[]
+
+  @@map("advogado")
+}
+
+/// Vínculo entre advogado e processo (um advogado pode atuar em vários).
+model AdvogadoProcesso {
+  id             Int      @id @default(autoincrement())
+  advogadoId     Int      @map("advogado_id")
+  caixaEntradaId Int      @map("caixa_entrada_id")
+  criadoEm       DateTime @default(now()) @map("criado_em")
+
+  advogado     Advogado     @relation(fields: [advogadoId], references: [id])
+  caixaEntrada CaixaEntrada @relation(fields: [caixaEntradaId], references: [id])
+
+  @@index([advogadoId])
+  @@index([caixaEntradaId])
+  @@map("advogado_processo")
+}
+
+// ==============================================================================
+// Biblioteca de referência
+// ==============================================================================
+
+/// Acervo de referência da área (tela Biblioteca).
+///
+/// Guarda o que a equipe consulta para instruir processo: estoque normativo,
+/// pareceres da Consultoria Jurídica e notas técnicas. O conteúdo pode vir de
+/// três formas, combináveis no mesmo registro — `link` para o texto publicado
+/// fora daqui, `texto` digitado no app e PDF anexado (`arquivo*`). Uma nota
+/// técnica costuma ter o resumo em texto e o PDF assinado junto.
+///
+/// `dataReferencia` é a data do documento (publicação do parecer, da norma), não
+/// a do cadastro — é por ela que a lista ordena, porque é o que importa para
+/// achar a referência mais recente sobre um tema.
+///
+/// O PDF fica no banco, em coluna binária: são poucos arquivos, o volume é
+/// pequeno e assim o acervo acompanha o backup do banco, sem depender de pasta
+/// no servidor. NUNCA selecionar `arquivoConteudo` nem `texto` em listagem.
+model BibliotecaTexto {
+  id Int @id @default(autoincrement())
+
+  /// estoque_normativo | parecer_cj | nota_tecnica
+  classificacao  String    @db.VarChar(40)
+  titulo         String    @db.VarChar(300)
+  tema           String?   @db.VarChar(200)
+  /// Data do documento (publicação/assinatura), não a do cadastro.
+  dataReferencia DateTime? @map("data_referencia") @db.Date
+  link           String?   @db.VarChar(1000)
+  texto          String?   @db.Text
+
+  arquivoNome     String? @map("arquivo_nome") @db.VarChar(255)
+  arquivoMime     String? @map("arquivo_mime") @db.VarChar(120)
+  arquivoTamanho  Int?    @map("arquivo_tamanho")
+  arquivoConteudo Bytes?  @map("arquivo_conteudo")
+
+  autor        String?   @db.VarChar(255)
+  versaoAtual  Int       @default(1) @map("versao_atual")
+  criadoEm     DateTime  @default(now()) @map("criado_em")
+  atualizadoEm DateTime? @updatedAt @map("atualizado_em")
+
+  versoes BibliotecaVersao[]
+
+  @@index([classificacao])
+  @@index([titulo])
+  @@index([tema])
+  @@index([dataReferencia])
+  @@map("biblioteca_texto")
+}
+
+/// Histórico de edições de um item da Biblioteca.
+/// Cada PUT no item gera uma versão com o conteúdo ANTERIOR, antes da gravação.
+model BibliotecaVersao {
+  id       Int      @id @default(autoincrement())
+  itemId   Int      @map("item_id")
+  /// 1, 2, 3...
+  numero   Int
+  autor    String?  @db.VarChar(255)
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  // Snapshot dos campos editáveis no momento da versão.
+  classificacao  String?   @db.VarChar(40)
+  titulo         String?   @db.VarChar(300)
+  tema           String?   @db.VarChar(200)
+  dataReferencia DateTime? @map("data_referencia") @db.Date
+  link           String?   @db.VarChar(1000)
+  texto          String?   @db.Text
+
+  item BibliotecaTexto @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@map("biblioteca_versao")
 }
