@@ -5,7 +5,7 @@
 | Campo | Valor |
 |---|---|
 | Projeto | Reconstrução do app "DETRAN - DGR - Processamento (Novo)", hoje em Power Apps, como solução própria |
-| Versão do documento | 0.33.1 |
+| Versão do documento | 0.33.2 |
 | Última atualização | agosto/2026 |
 | Status | Em desenvolvimento |
 
@@ -70,7 +70,53 @@ Camadas:
 
 ## 3. Stack tecnológica
 
-Backend:
+> **Migração para o padrão DTI em andamento.** A stack aprovada da plataforma é
+> **NestJS + Prisma + PostgreSQL** no backend e **React + Vite + MUI v6** no
+> frontend (ver `.kiro/steering/tech.md`). O backend Python descrito abaixo
+> continua no ar e é migrado domínio por domínio; enquanto isso, a API NestJS
+> repassa ao FastAPI os caminhos ainda não portados
+> (`apps/api/src/app/legacy/`). Situação em 12/08/2026: **57 de 125 endpoints**
+> migrados — anotações internas (3), `/me` (1), usuários (5), advogados (8),
+> controle de prazos (3), auditoria/alertas (2), recurso/Decisão II (4),
+> Consulta Unificada (4), exportação para BI (4), cautelares (11) e
+> biblioteca (12).
+>
+> **Os domínios que só usam o banco estão concluídos.** Os 68 restantes dependem
+> do cliente do SEI, ainda em Python: caixa de entrada (7), despachos (7),
+> documentos (6), fases (9), textos-padrão (11), processos em andamento (23),
+> busca (1) e histórico. Notificações (3) depende dele apenas em parte — a
+> listagem dispara uma varredura no SEI para detectar documentos externos.
+>
+> Portar `app/integrations/sei/client.py` (autenticação, token, retry e as
+> chamadas de processo e documento) é a maior dependência isolada que resta.
+>
+> **Permissão e competência são camadas distintas.** A permissão do Gestão de
+> Acessos dá acesso ao endpoint e é reconfigurável sem deploy. A competência
+> legal — só o Coordenador Geral aplica, renova ou revoga medida cautelar, art.
+> 62, parágrafo único, da Lei 10.177/1998; só a Coordenação profere a Decisão II
+> — é verificada por perfil no código, porque alterá-la seria alterar quem a lei
+> autoriza, não uma configuração de acesso.
+>
+> Atenção ao caso do recurso: ele vive sob `/processos-andamento/{id}/recurso`,
+> mas o **restante** daquele domínio segue no Python. É por isso que os padrões
+> de `ROTAS_MIGRADAS` são ancorados rota por rota, e não por prefixo — um padrão
+> largo como `/processos-andamento/\d+` engoliria os 23 endpoints ainda não
+> portados, que passariam a responder 404.
+>
+> **Notificações ficam para depois do cliente do SEI de propósito:**
+> `GET /notificacoes` dispara em segundo plano uma varredura no SEI para
+> detectar documentos externos juntados ao processo. Migrar a rota sem essa
+> varredura faria a detecção parar de rodar nos dois backends — o Python
+> deixaria de receber a rota, e o NestJS não teria o que executar.
+
+Stack de destino (padrão da plataforma):
+- Node.js 20 + TypeScript 5.4 (modo estrito)
+- NestJS 10 (API), class-validator (validação), Jest (testes)
+- Prisma 5 + PostgreSQL 16 (um schema por domínio: `processamento`)
+- React 18 + Vite 5 + MUI v6 (frontend)
+- Autorização pelo schema `gestao_acessos_v2`, somente leitura
+
+Backend atual (em migração):
 - Python (desenvolvimento atual em 3.14; suportado 3.12+)
 - FastAPI (API), Uvicorn (servidor), Pydantic (validação)
 - SQLAlchemy 2 (ORM / acesso ao banco)
@@ -80,33 +126,58 @@ Backend:
 - pyodbc + ODBC Driver for SQL Server (a adicionar para conectar no SQL Server)
 
 Frontend:
-- Node.js LTS (24.x) + npm — ferramenta de desenvolvimento/build (não roda em produção)
+- Node.js 20 + npm workspaces (o padrão fixa a 20; o host de desenvolvimento tem 24)
 - React 18 + TypeScript, build com Vite 5
 - Vitest + Testing Library (testes)
+- Tailwind CSS — **a substituir por MUI v6**, que o padrão exige
+  (`.kiro/steering/frontend-react.md` proíbe frameworks CSS adicionais)
 
 Banco de dados:
-- SQL Server (alvo de produção) / SQLite (desenvolvimento local)
+- PostgreSQL 16 (alvo, já em uso pela API NestJS) / SQLite (backend Python em
+  desenvolvimento local)
 
 ## 4. Estrutura do repositório
 
+Layout canônico da plataforma (`.kiro/steering/structure.md`): monorepo com
+npm workspaces, `apps/api` e `apps/web`, e `prisma/` na raiz.
+
 ```
 projeto_processamento/
-  backend/
-    app/
-      api/            # rotas, dependências (get_db), segurança (Entra ID)
-        routes/       # health, caixa_entrada
-      core/           # config (.env) e security
-      db/             # base (engine/sessão) e models (modelo de dados)
-      integrations/   # sei/ e graph/ (clientes das APIs)
-      migration/      # mappers (SharePoint -> modelos)
-      schemas/        # schemas Pydantic (entrada/saída da API)
-    migration/        # migrar_sharepoint.py (CLI de migração)
-    scripts/          # seed_dev.py, exemplo_sei.py
-    tests/            # testes (pytest)
-  frontend/
-    src/
-      api/            # client.ts (cliente HTTP)
-      features/caixaEntrada/   # tela + api + tipos + teste
+  package.json        # workspaces + scripts (dev:api, dev:web, build:*, prisma:*)
+  .npmrc              # escopo @detran -> GitHub Packages
+  manifest.json       # identidade do sistema e stack
+  .env.example        # modelo do .env ÚNICO da raiz
+  docker-compose.yml         # PostgreSQL + API (desenvolvimento)
+  homolog.docker-compose.yml # processamento-back:3001 / -front:3000
+  apps/
+    api/              # backend NestJS (porta 3001)
+      src/
+        main.ts       # setGlobalPrefix("api"), /health fora do prefixo
+        integrations/
+          sei/          # cliente da API do SEI (3 camadas — ver seção 5.1)
+        app/
+          auth/         # identidade: UsuarioAtualGuard, @UsuarioAtual()
+          permissions/  # PermissionGuard, @RequirePermission, banco de acessos
+          legacy/       # PONTE TEMPORÁRIA para o FastAPI (remover no fim)
+          anotacoes/    # 1º domínio migrado: controller, service, module, dto/
+        shared/         # PrismaService
+    web/              # frontend React + Vite (5173 em dev, 3000 no contêiner)
+      src/
+        api/            # client.ts (BASE_API — única fonte da URL)
+        features/       # 13 áreas: caixaEntrada, analise, prazos, cautelares...
+        components/     # Layout, PesquisaGlobal, NotificacoesDropdown
+        lib/            # format.ts
+  prisma/
+    schema.prisma     # 28 models (paridade com o modelo Python)
+    migrations/       # versionadas
+    dev/              # seed do gestao_acessos_v2 para desenvolvimento local
+  backend/            # BACKEND PYTHON — em migração, ainda no ar
+    app/              # api/routes (22 arquivos), core, db, integrations, services
+    automacoes/       # varredura_sei, verificar_prazos, sincronizar_*, limpar_*
+    tests/            # pytest
+  .kiro/
+    steering/         # 17 canônicos + dominio.md, api-sei.md, sharepoint-*.md
+    skills/           # 17 skills da plataforma
   docs/
     negocio/          # documentação de negócio
     tecnica/          # este documento
@@ -205,6 +276,7 @@ Notas de desempenho no modelo:
 - Alertas internos (`features/home/AlertasInternos.tsx`): os oito gatilhos no topo da tela inicial, mostrando só os que têm pendência.
 - Caixa de Entrada: tabela com Data de recebimento, Nº SEI, CNPJ/CPF (com máscara), Agente regulado e botão "Analisar"; filtros de busca (Nº SEI/CNPJ com ou sem máscara), agente, período de data e "Limpar filtros".
 - Cliente HTTP em `src/api/client.ts`; URL da API em `VITE_API_URL` (padrão `http://localhost:8000`). Formatação em `src/lib/format.ts`.
+- Links para processos no SEI são protegidos globalmente por `src/components/SeiLinkGuard.tsx`: no primeiro acesso de cada aba, o usuário confirma que já entrou ou abre a Minha Área SP; depois, os links montados no frontend e os `link_sei` devolvidos pelo backend abrem diretamente durante a sessão da aba. As URLs públicas são configuradas por `VITE_SEI_WEB_URL` e `VITE_MINHA_AREA_URL` em `frontend/.env`.
 - Estilo (design system): Tailwind CSS com paleta Material Design 3 derivada do layout do Google Stitch (`tailwind.config.js`), fonte Open Sans e ícones Material Symbols. Tokens de cor (primary #00447f, primary-container #005ca8, surfaces, error...), spacing (sidebar 260px, topbar 72px) e fontSize padronizados. Layout responsivo: barra lateral no desktop e navegação inferior no mobile.
 - Home: dashboard com KPIs (itens na caixa de entrada = real; demais a definir), grade de atalhos e "recebidos recentemente".
 - Identidade visual oficial: o wiki do DETRAN não abriu por restrição de rede; usamos as cores/fonte do app atual. Ícones via Google Fonts (Material Symbols) podem ser bloqueados na intranet — auto-hospedar se necessário.
@@ -255,27 +327,60 @@ Ambientes:
 
 ## 11. Testes
 
-- Backend: 436 testes (cliente SEI, cliente Graph, mapeadores, modelo de dados, API + filtros, mala direta dos modelos, despachos, fases, notificações, localização município/superintendência, apontamentos de conformidade, inventário de relatórios/processos do agente, busca unificada, consulta unificada, limpeza dos textos-padrão — cabeçalho, título, assinatura e integridade do HTML — e suas variáveis, tela de textos-padrão do coordenador com controle de acesso, gestão de usuários, biblioteca com versionamento, catálogo de documentos por fase, séries do SEI, consolidação dos agentes regulados e subclasses de Perito). Rodar em `backend/`: `python -m pytest -q`.
-- Frontend: 66 testes (DespachoModal erros/sucesso e mala direta, CaixaEntradaPage, ProcessosAndamentoPage, TextosPadroesPage, formatação/tipo de pessoa/divisão, padrão de caixa — razão social/nome em caixa alta e demais textos com a primeira letra maiúscula, preservando siglas —, substituição dos marcadores do modelo, roteamento da pesquisa global). Rodar em `frontend/`: `npm test`.
+- Backend legado (pytest): 450 testes (cliente SEI, cliente Graph, mapeadores, modelo de dados, API + filtros, mala direta dos modelos, despachos, fases, notificações, localização município/superintendência, apontamentos de conformidade, inventário de relatórios/processos do agente, busca unificada, consulta unificada, limpeza dos textos-padrão — cabeçalho, título, assinatura e integridade do HTML — e suas variáveis, tela de textos-padrão do coordenador com controle de acesso, gestão de usuários, biblioteca com versionamento, catálogo de documentos por fase, séries do SEI, consolidação dos agentes regulados e subclasses de Perito). Rodar em `backend/`: `python -m pytest -q`. O CI só executa este bloco enquanto `backend/requirements.txt` existir.
+- API NestJS (Jest): 124 testes. Além dos de domínio, cobrem a integração com o SEI: classificação de erro temporário x definitivo, a política de repetição (leitura repete, escrita nunca), autenticação concorrente, derivação dos três hosts e o interpretador de JSON tolerante a caractere de controle. Inclui também 14 de geração de CSV para BI (escape de vírgula, aspas e quebra de linha, e as duas conversões herdadas do Python — número vira texto, booleano continua booleano) — cálculo legal de prazos (25: as três regras da Lei 10.177/1998, prorrogação por sábado, domingo, feriado e emenda, contagem contínua, tradução do dia da semana entre Python e JavaScript, semáforo e desempate de rótulo por duração), trilha de auditoria (17: o que entra na trilha, extração de entidade e id do caminho, e a exclusão de `/health`), anotações (formato snake_case, data ISO, ordem cronológica, autoria, precedência do autor), o formato de erro `{detail}` que o cliente do frontend espera, e as travas do prefixo `/api`. Rodar na raiz: `npm run test:api`. Os testes importam de `@jest/globals`; **não** instalar `@types/jest`, porque o hoisting do workspace coloca o `expect` do Jest no escopo do `apps/web` e quebra o `expect(valor, mensagem)` do Vitest.
+- Frontend (Vitest): 79 testes (DespachoModal erros/sucesso e mala direta, CaixaEntradaPage, ProcessosAndamentoPage, TextosPadroesPage, formatação/tipo de pessoa/divisão, padrão de caixa — razão social/nome em caixa alta e demais textos com a primeira letra maiúscula, preservando siglas —, substituição dos marcadores do modelo, roteamento da pesquisa global, travas do prefixo `/api`). Rodar na raiz: `npm run test:web`.
 - O projeto não usa `@testing-library/user-event`; a interação nos testes é com `fireEvent` de `@testing-library/react`.
 - As telas de listagem esperam 350ms (debounce) antes de consultar a API; os testes dessas telas usam `waitFor` com timeout de 5s para não falhar de forma intermitente quando os arquivos rodam em paralelo.
 - Estratégia: cada componente nasce com teste; integrações testadas com mocks (sem rede).
 
 ## 12. Como rodar (desenvolvimento)
 
-Backend (em `backend/`):
+Topologia durante a migração — o navegador conhece **um** endereço, e a API
+NestJS repassa ao FastAPI o que ainda não foi portado:
+
 ```
-python -m pip install -r requirements.txt
-python scripts/seed_dev.py            # dados de exemplo (opcional)
-python -m uvicorn app.main:app --reload   # API em http://localhost:8000
+Vite (5173) --/api--> NestJS (3001) --não portado--> FastAPI (8080)
 ```
 
-Frontend (em `frontend/`):
+Preparo (uma vez, na raiz):
 ```
+cp .env.example .env      # ajuste se precisar; os valores de dev já vêm prontos
 npm install
-npm run dev                           # http://localhost:5173
-npm test
+docker compose up -d postgres   # cria também o schema gestao_acessos_v2 local
+npm run prisma:migrate
 ```
+
+Tudo de uma vez (recomendado):
+```
+bash scripts/dev-start.sh --legado    # --legado sobe também o FastAPI
+```
+
+Ou serviço por serviço:
+```
+npm run dev:api    # NestJS  em http://localhost:3001/api  (health em /health)
+npm run dev:web    # Vite    em http://localhost:5173
+cd backend && .venv/Scripts/python.exe -m uvicorn app.main:app --port 8080 --reload
+```
+
+No Windows, `dev.bat` sobe os três processos e abre o navegador. Ele existe só
+durante a transição: o padrão manda rodar tudo dentro do WSL
+(`.kiro/steering/onboarding-fase0.md`).
+
+Verificação:
+```
+npm run build:api && npm run build:web
+npm run test:api  && npm run test:web
+cd backend && python -m pytest -q
+```
+
+Pontos que costumam morder:
+- Sem `PERMISSIONS_DATABASE_URL` a API **não sobe** — é fail-closed proposital.
+  O `docker compose` já provisiona o banco local que atende essa variável.
+- Depois de editar `prisma/dev/*.sql`, o seed só reaplica com
+  `docker compose down -v` (o PostgreSQL roda o initdb apenas na primeira subida
+  do volume).
+- Sem o FastAPI no ar, telas de domínios não portados respondem **502**.
 
 ## 13. Status e roadmap
 
@@ -300,6 +405,28 @@ Próximos passos:
 - **Exportação para Power BI** — futura integração.
 
 ## 14. Histórico de atualizações
+
+- agosto/2026 — v0.43: **Cliente do SEI portado para o NestJS — a dependência que travava os 68 endpoints restantes.** Em `apps/api/src/integrations/sei/`, dividido em três camadas: classificação de erro, camada HTTP (token, cabeçalhos, repetição) e as 24 chamadas de negócio. **A regra central é que só leitura repete**, e o parâmetro é obrigatório sem valor padrão, para quem escrever uma chamada nova ter de decidir: uma escrita que falhou por timeout pode ter sido concluída no servidor — o que se perdeu foi a resposta, não a ação —, e repetir criaria processo ou documento duplicado no SEI, desfeito só manualmente. A classificação temporário x definitivo chega até a tela pelo campo `temporario`, que o `DespachoModal` usa para decidir se mantém o botão Confirmar habilitado; errar custa nos dois sentidos, perda do texto digitado ou duplicação no SEI. **Três achados registrados no código:** o SEI publica **três hosts** (`sei-processos`, `sei-documentos`, `sei-parametros`) e chamar o errado devolve 404, que parece "processo não existe" — os três são derivados de `SEI_API_BASE`, com teste garantindo que apontar a base para homologação leve os três para homologação, porque documentos em produção com processos em teste leria documento real de processo fictício; o SEI devolve **JSON inválido** quando o nome de um documento foi cadastrado com Enter no meio, e o `json.loads(strict=False)` do Python não tem equivalente em JavaScript, então foi escrito um interpretador que escapa controles apenas DENTRO de string, preservando a quebra de linha entre campos, que é espaço em branco legítimo (sem isso o analista via "documento não encontrado" para documento existente); e **consultar documento não repete**, mesmo sendo leitura, porque unidade sem acesso recebe 500 e repetir na mesma unidade não muda nada — tentar outra é mais rápido que três esperas. A configuração **não** é validada na inicialização: domínios já migrados que não tocam o SEI (biblioteca, usuários, auditoria) precisam funcionar em desenvolvimento sem credencial, então a exigência acontece na primeira chamada e o erro nomeia as variáveis que faltam. **Valor suspeito preservado:** o backend Python envia `sinDiasUteis: "N+"` quando o prazo não é em dias úteis, com um `+` que aparenta erro de digitação; mantido e marcado no código, porque sem credencial não há como verificar contra o SEI e, se a API validar estritamente, o comportamento atual é o que está em uso. 124 testes Jest + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.42: **Biblioteca no NestJS (57 de 125 endpoints) — os domínios que só usam o banco estão concluídos.** Portados os doze endpoints do acervo: consulta, filtros, cadastro multipart, edição, versionamento com restauração, exclusão e as três operações do PDF anexado. **A validação do PDF não confia em extensão nem em content-type:** confere os primeiros bytes do arquivo, e na verificação um HTML salvo como `.pdf` foi recusado — sem essa checagem o arquivo seria aceito e o usuário veria um erro do navegador ao abrir, sem pista do motivo. A integridade binária do caminho completo (Prisma `Bytes` → `Buffer` → resposta HTTP) foi conferida byte a byte, e o download usa `Content-Disposition: inline`, porque a tela exibe o documento num visualizador e `attachment` forçaria download a cada abertura. **A regra de "não aceitar item sem conteúdo" vale em três pontos** — cadastro, edição e remoção do PDF — e foi testada no caso mais fácil de esquecer: remover o PDF de um item que só tem PDF é recusado, e passa depois de o item ganhar texto. A restauração de versão guarda o estado atual **antes** de sobrescrever, para restaurar por engano não apagar o que estava valendo. **Dois detalhes preservados de propósito:** este domínio responde **400** nas validações, e não o 422 usado em recursos e cautelares — a inconsistência existe no backend Python e mudar agora alteraria o comportamento durante a convivência dos dois; e as classificações são **quatro**, não três como diz a docstring de lá (`decisao_administrativa` entrou depois e o comentário não acompanhou). A checagem de coordenação para exclusão saiu das app roles do token e passou a vir do perfil resolvido, porque as roles deixaram de ser fonte de autorização no padrão; verificado que um chefe de divisão com permissão de tela consulta o acervo mas é barrado ao excluir item de outro autor. Nas listagens, `select` explícito no Prisma cumpre o papel do `deferred` do SQLAlchemy: sem ele, 200 itens trariam o texto integral e até 10 MB de PDF cada. 75 testes Jest + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.41: **Painel de medidas cautelares no NestJS (45 de 125 endpoints).** Portados os onze endpoints do ciclo completo: consulta, resumo, aplicação, concordância, recusa, renovação, revogação, as duas certidões e a baixa da assinatura. **A separação entre permissão e competência ficou explícita e foi verificada:** a permissão do Gestão de Acessos dá acesso à tela; a competência exclusiva do Coordenador Geral (art. 62, parágrafo único, da Lei 10.177/1998) é verificada por perfil no código. No teste, um chefe de divisão COM a permissão listou normalmente e foi barrado ao tentar concordar com a medida, recebendo a mensagem que cita o fundamento legal — permissão é configuração, competência é lei. Cada regra de bloqueio foi conferida no banco: prazo fora de 30/45/60/90 recusado, ausência de vínculo com processo recusado, certidão de desbloqueio antes da revogação recusada, revogar duas vezes e renovar medida revogada recusados, e formato de evidência fora da lista recusado. A renovação cria nova cautelar começando no dia seguinte ao vencimento — ou hoje, se já passou, para não gerar medida retroativa — e a original passa a `renovada` **perdendo o semáforo**, porque cor em medida superada sugeriria urgência inexistente; na verificação, um prazo de 45 dias caiu em fim de semana e foi prorrogado automaticamente, exercitando a contagem legal dentro de outro domínio. **O comportamento operacionalmente mais relevante também foi provado:** quando o agente bloqueado apresenta defesa, o caso sobe ao topo da fila mesmo vencendo depois dos demais, e o `status_bloqueio` vira `revisar` — mostrar "ativo" esconderia uma decisão pendente sobre alguém impedido de trabalhar. A detecção da defesa continua por dois sinais (prazo fechado como respondido pela automação **ou** evento de juntada), porque olhar só um deixaria metade dos casos passar. **Correção de robustez herdada:** o carregamento do calendário de feriados passou a tolerar falha de leitura, como no backend Python — sem o calendário a contagem apenas deixa de prorrogar para dia útil, o que é preferível a derrubar a listagem de prazos inteira. A inclusão das certidões no SEI segue pendente, com número marcado como `PENDENTE_SEI_*`, igual ao comportamento atual. 75 testes Jest + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.40: **Exportação para BI no NestJS (34 de 125 endpoints).** Portadas as quatro exportações — processos, eventos, fases e prazos —, cada uma em JSON por padrão ou CSV com `?formato=csv`, e sem paginação: o consumidor é uma carga de dados, e paginar arriscaria carga parcial, que é pior que carga demorada. **Três detalhes do contrato foram preservados de propósito, todos verificados com dados reais.** O serializador do backend Python converte **número em texto** (`id` sai como `"12"`, não `12`) e mantém **booleano como booleano** (`reiniciado` sai `false`, não `"False"`) — a assimetria vem da ordem dos testes de tipo naquele código, mas já está no contrato consumido pelo Power BI, e mudar agora alteraria o tipo da coluna e quebraria relacionamento entre tabelas publicadas. E **data e hora saem sem o sufixo `Z`**: o valor é gravado no fuso de São Paulo em coluna sem fuso, então marcá-lo como UTC faria o BI deslocar tudo em três horas. O gerador de CSV foi escrito à mão e coberto por 14 testes, porque o escape é o ponto frágil: razão social com vírgula — caso comum na base, como "EMPRESA X, LTDA" — partiria a linha em duas colunas e o BI leria o CNPJ na coluna do nome sem erro nenhum, aparecendo semanas depois como número que não bate. Usa CRLF e `charset=utf-8` no Content-Type; sem o charset o Excel abre em Latin-1 e "São Paulo" chega corrompido. Itens ainda em triagem (`pendente`) continuam fora da exportação de processos. 75 testes Jest + 79 Vitest + 450 pytest. **Nota de ambiente reincidente:** rodar `build:web` seguido de `test:web` na mesma sessão faz dois arquivos de teste falharem ao abrir arquivo temporário; isolados, os 9 arquivos e 79 testes passam. É contenção de disco por o projeto estar em `Downloads`.
+
+- agosto/2026 — v0.39: **Consulta Unificada no NestJS (30 de 125 endpoints).** Portados os quatro endpoints da tela somente-leitura: a listagem com filtros e paginação e os três alimentadores de filtro (agentes, situações e fases). É o **único service que usa SQL em vez do query builder do Prisma**, e por um motivo concreto: a ordenação da tela precisa de `LOWER()` na razão social e de `REPLACE` encadeado para comparar CPF/CNPJ sem máscara, e o `orderBy` do Prisma não expressa nenhum dos dois; como a paginação é feita no banco — a tabela tem cerca de 20 mil linhas —, ordenar em memória deixaria só a página ordenada e a ordem mudaria de página para página. Todos os valores vão parametrizados via `Prisma.sql`; o único trecho interpolado é o nome da coluna de ordenação, tirado de uma lista fechada. Três comportamentos que o SQL garante e foram verificados com dados de caixa mista e máscaras de tamanhos diferentes: linha sem data fica no fim **nas duas direções** (`NULLS LAST`), porque nulo tratado como "o menor" apareceria como o registro mais antigo; a ordem por razão social ignora a caixa (sem `LOWER()`, a collation daria "Beta, Epsilon, GAMA, alfa, delta"); e o `id` no fim da cláusula é desempate estável, sem o qual a paginação repete ou perde registro. O filtro de fases devolve as fases na ordem do rito, e não alfabética, e fase gravada fora da lista oficial vai para o fim em vez de desaparecer — sumir esconderia registro do usuário. A distinção entre `tipo` e `fonte` foi preservada e conferida: um registro pode ser `tipo=processo` e ainda assim `fonte=fiscalizacao`, quando nunca chegou à caixa de entrada. Criado `prisma/dados-teste/consulta-unificada.sql` com os casos que provam cada um desses pontos. 61 testes Jest + 79 Vitest + 450 pytest. **Nota de ambiente:** rodar os quatro scripts de verificação em sequência com o Docker ativo fez dois arquivos de teste do frontend falharem ao abrir arquivo temporário (`UNKNOWN: unknown error`); isolados, os 9 arquivos e 79 testes passam. É a mesma contenção de disco que produziu os avisos de extração no `npm install` inicial, e vem de o projeto estar em `Downloads`.
+
+- agosto/2026 — v0.38: **Painel de recurso e Decisão II no NestJS, e o status de erro de validação alinhado ao do FastAPI (26 de 125 endpoints).** Portados os quatro endpoints do trâmite recursal: consulta do painel, registro da interposição, parecer da Consultoria Jurídica e Decisão II. A interposição abre de uma vez os três prazos do rito — reconsideração (7 dias, art. 47, VI), julgamento (30 dias, art. 47, VII) e o teto de decisão (120 dias, art. 50) — todos contados da data do protocolo pela regra da Lei 10.177/1998, e sem duplicar quando a interposição é registrada de novo. A Decisão II exige o parecer registrado antes de decidir, porque o documento de negócio manda considerá-lo obrigatoriamente; no resultado `retorno_fase` a fase aberta é fechada, uma nova é aberta no ponto indicado e os prazos do recurso passam a `respondido`, tudo na mesma transação. As fases oferecidas para retorno excluem `recurso`, `encerramento` e `encerrado` — devolver para elas não é retorno. A competência de cada ato continua verificada por perfil, e não por permissão configurável: quem profere a Decisão II é definido por competência legal, não por configuração de acesso. **Status de validação:** o `ValidationPipe` global passou a responder **422** em vez do 400 padrão do NestJS, para casar com o FastAPI — que usa 422 tanto nas falhas do Pydantic quanto nas validações de negócio. Sem esse alinhamento, endpoints migrados e não migrados responderiam com status diferente para o mesmo tipo de erro enquanto convivem atrás da ponte. Verificado ponta a ponta no banco: os três prazos abertos com vencimentos corretos, decisão sem parecer recusada com 409, resultado inválido e fase de retorno inexistente recusados com 422, prazos encerrados, fase `instrucao` reaberta com a observação do retorno, notificação criada e eventos gravados na ordem do rito. **Observação registrada, comportamento mantido:** registrar a interposição duas vezes gera um segundo evento "Prazos do recurso abertos" mesmo sem abrir prazo nenhum — o backend Python faz igual, e a divergência foi preservada de propósito enquanto os dois convivem; a imprecisão na timeline fica para decisão da área. 61 testes Jest + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.37: **Trilha de auditoria e alertas internos no NestJS, e a correção de uma lacuna aberta pela própria migração (22 de 125 endpoints).** Ao portar os endpoints de escrita das versões anteriores, o registro na trilha não foi levado junto — no backend Python ele é uma dependência global de `main.py`, não algo escrito endpoint a endpoint, e por isso passou batido. O efeito era que **toda escrita já migrada deixou de ser auditada**, contrariando a exigência da Documentação de Negócio v3.0. Corrigido com `auditoria.middleware.ts`, aplicado a todas as rotas. A gravação acontece no evento `finish` da resposta, e não na entrada: isso preserva o comportamento essencial do Python — tentativa recusada por falta de permissão também entra na trilha, porque `finish` dispara igual em 403 — e ainda grava o `status_http` real, que antes ficava sempre nulo; ler a identidade nesse momento é o que permite saber quem tentou, já que o guard de identidade já rodou. Falha ao auditar apenas registra no log, nunca derruba a requisição, porque a ação do usuário já aconteceu. Verificado no banco: ação permitida gravada com status 201, ação negada gravada com status 403 e o usuário correto, `GET` não auditado, e entidade extraída sem o prefixo `/api` (quando a API foi para `/api`, toda linha passava a ter entidade `"api"` e o filtro por área ficava inútil — a trilha continuava sendo escrita, só impossível de consultar). **`GET /auditoria`** passou de `exigir_coordenador` para a permissão `processamento:auditoria:consultar`, configurável sem deploy; a contagem e a página saem na mesma transação, senão um registro gravado entre as duas faria o total não bater. **`GET /alertas`** entrega os oito gatilhos das regras transversais, calculados na hora — alerta gravado viraria mentira no instante seguinte ao usuário resolver o caso. Os `JOIN` com `caixa_entrada` que o Python fazia em cada consulta de alerta **não** foram portados, e isso é proposital: eles existiam porque o SQLite não impunha chave estrangeira e a automação de limpeza deixava prazos e cautelares órfãos, gerando falso alarme que ninguém conseguia resolver; no PostgreSQL as chaves são declaradas e órfão é impossível. Criado `prisma/dados-teste/alertas.sql` (fora de `prisma/dev/`, para não virar seed automático), com um processo por alerta e casos negativos propositais — prazo em decurso, cautelar revogada, recurso já decidido e encerramento concluído —, todos corretamente filtrados na verificação. 61 testes Jest + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.36: **Contagem legal de prazos portada para o NestJS, e a tela de Controle de Prazos com ela (20 de 125 endpoints).** A regra da Lei 10.177/1998 vive agora em `apps/api/src/app/prazos/calculo-prazos.ts` — exclui o dia inicial, inclui o final e prorroga vencimento que cai em dia sem expediente, com fim de semana no meio da contagem contando normalmente. **Duas armadilhas de tradução, ambas capazes de deslocar todos os vencimentos do sistema:** em Python `weekday()` conta 0 como segunda e o teste de fim de semana era `>= 5`, enquanto em JavaScript `getUTCDay()` conta 0 como domingo — copiar a comparação daria sexta e sábado como fim de semana e domingo como dia útil; e "hoje" precisa ser hoje em São Paulo, não em UTC, porque às 22h daqui já é o dia seguinte no horário universal, e todo cálculo feito no fim da tarde apontaria um dia a mais de decurso, o que faria a certidão sair antes de o prazo terminar. Os dois cuidados ficaram centralizados em `shared/datas.ts`, e a aritmética de dias usa métodos UTC para não atravessar horário de verão. Na tela de prazos, preservado o comportamento dos cartões de resumo, que contam o universo filtrado **sem** o filtro de situação — eles servem de filtro rápido, então precisam continuar mostrando as contagens de cada cor depois do clique; e corrigido no caminho um defeito da própria migração, em que a busca olhava apenas o número gravado na linha (`numero_processo_sei || numero_sei`) em vez dos dois campos, de modo que o número do relatório de fiscalização de um processo já instaurado não encontrava nada. 48 testes Jest (25 novos, só de contagem de prazos) + 79 Vitest + 450 pytest.
+
+- agosto/2026 — v0.35: **Migração dos domínios para NestJS — 17 de 125 endpoints, e duas quebras de contrato corrigidas antes de propagarem.** Portados `/me` (1), usuários (5) e advogados (8), somando-se às anotações da v0.34. **Formato de erro:** o cliente HTTP do frontend lê o corpo do erro em `corpo.detail` (convenção do FastAPI), mas o NestJS responde `{statusCode, message, error}` — sem tratamento, toda mensagem de erro de endpoint migrado viraria o texto genérico "Erro 4xx ao chamar /caminho", e o `DespachoModal` perderia o campo `detail.temporario`, que decide se o botão Confirmar continua habilitado após falha momentânea do SEI: uma instabilidade passageira seria tratada como definitiva e o usuário perderia o que já digitou. Criado o filtro global `FormatoErroFastApiFilter`, que devolve mensagem simples como texto, resposta estruturada como objeto, junta o array do ValidationPipe numa frase só e nunca vaza stack trace (erro não previsto sai como 500 genérico, com o rastro apenas no log). **Normalização antes da validação:** `POST /usuarios` com `"  ANA@Detran.SP.gov.br "` passou a responder 400, porque o `@IsEmail` roda antes do `trim` — o FastAPI fazia `.strip().lower()` e aceitava, e e-mail copiado de planilha costuma vir com espaço invisível na ponta. Criado `shared/transformacoes.ts` (`Trim`, `TrimMinusculas`, `TrimMaiusculas`, `TrimOuNulo`), aplicado nos DTOs antes das regras. **Perfis:** novo módulo global `perfis/`, que resolve o perfil de exibição por Gestor Principal no Gestão de Acessos → coluna `perfil` da tabela `usuario` → analista; os caminhos que vinham das app roles do token e da lista `COORDENADORES` do `.env` saíram, porque no padrão quem manda em acesso é o Gestão de Acessos. Perfil serve só para a tela decidir o que mostrar — quem autoriza é o `PermissionGuard`. Corrigida no caminho uma inconsistência do sistema atual: um Coordenador Geral cadastrado no banco recebia `coordenador: false` e **não via o menu "Textos-padrão"**, porque a verificação comparava com o perfil `coordenador` exato. Catálogo do seed local com 12 permissões. 23 testes Jest + 79 Vitest + 450 pytest. **Pendências:** 108 endpoints (43 só de banco, 65 dependentes do cliente do SEI), 4 automações, Tailwind → MUI, migração dos dados do SQLite.
+
+- agosto/2026 — v0.34: **Adequação ao padrão da plataforma DTI (fase 1 de 2).** O repositório virou monorepo npm workspaces — `frontend/` foi para `apps/web` com `git mv` (94 arquivos, histórico preservado) e nasceu `apps/api` em NestJS 10 + Prisma 5, com `package.json`/`.npmrc`/`manifest.json` na raiz, 17 steerings e 17 skills copiados do template, `docker-compose.yml` reescrito, `homolog.docker-compose.yml` novo (`processamento-back:3001`/`processamento-front:3000`), `ci.yml` no padrão (só PR para main) e `homolog-deploy.yml` publicando em `ghcr.io/detran-sp/detran-dti-processamento-{back,front}`; o `docker-build.yml` saiu por apontar para caminhos que deixaram de existir. **Autorização** conforme `permissionamento.md`: módulos `auth/` e `permissions/` com `UsuarioAtualGuard` + `PermissionGuard`, hierarquia Gestor Principal → concessão direta → perfil → 403, e 503 fail-closed em erro de banco; sem `PERMISSIONS_DATABASE_URL` a API não inicializa, e por isso foi criado o seed local `prisma/dev/gestao_acessos_v2.sql` — sem ele ninguém conseguia subir a API na própria máquina. **`schema.prisma` foi de 22 para 28 models**, fechando a paridade com o SQLAlchemy: faltavam `auditoria`, `recurso_processo`, `advogado`, `advogado_processo`, `biblioteca_texto` e `biblioteca_versao`, mais o `responsavel_id` de `caixa_entrada`/`processo` e as 17 colunas que `cautelar` ganhou na v0.31; migração inicial gerada e aplicada (29 tabelas no schema `processamento`). **Ponte de migração** (`apps/api/src/app/legacy/`) repassa ao FastAPI os caminhos ainda não portados, para o sistema não parar durante a transição — dois defeitos encontrados aqui: `forRoutes("api/*")` não executava o middleware, e com `forRoutes("*")` o Express esvaziava o `req.path` (o curinga casa o caminho inteiro e o trecho vai para o `req.baseUrl`), fazendo a comparação com `/api` nunca dar certo; os dois sintomas eram **404**, que parece rota inexistente e não ponte inoperante — a solução foi usar `req.originalUrl`. A lista de rotas migradas virou expressão regular ancorada, e não prefixo de texto, porque domínio migra em partes: um prefixo `/caixa-entrada` marcaria o domínio inteiro como pronto e os endpoints ainda em Python passariam a responder 404. **Primeiro domínio portado: anotações** (3 de 125 endpoints), com o contrato de resposta mantido em `snake_case` — o Prisma devolve camelCase, e como os dois backends atendem o mesmo `/api`, formato divergente não daria erro de rede: a tela receberia 200 e mostraria campo vazio. 450 testes pytest + 18 Jest + 79 Vitest. **Pendências:** 122 endpoints em 21 domínios, 4 automações, Tailwind → MUI v6 (1.739 usos de `className`), migração dos dados do SQLite, e a validação dos nomes de coluna do `gestao_acessos_v2` real contra a DDL de homologação.
+
+- agosto/2026 — v0.33.2: links do SEI passaram a usar o `SeiLinkGuard` global, com orientação para login pela Minha Área SP no primeiro acesso de cada aba, cobertura dos links dinâmicos do backend e configuração por `VITE_SEI_WEB_URL`/`VITE_MINHA_AREA_URL`; frontend validado com 79 testes e build de produção.
 
 - junho/2026 — v0.1: documento criado. Backend (SEI, Graph, modelo de dados, API + Entra ID em modo dev), frontend (tela de Caixa de Entrada) e migração inicial (Caixa de Entrada). 16 testes no total (14 backend + 2 frontend).
 - junho/2026 — v0.2: tela de Caixa de Entrada (frontend) com navegação, layout (logo/menu/saudação), filtros (busca por Nº SEI/CNPJ com ou sem máscara, agente, período de data) e botão "Analisar"; API com esses filtros, `/me` e `/caixa-entrada/agentes`. 22 testes no total (20 backend + 2 frontend).
