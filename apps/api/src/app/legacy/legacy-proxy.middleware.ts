@@ -80,6 +80,8 @@ export const ROTAS_MIGRADAS: readonly RegExp[] = [
   /^\/biblioteca\/\d+\/arquivo$/,
   /^\/biblioteca\/\d+\/versoes$/,
   /^\/biblioteca\/\d+\/versoes\/\d+\/restaurar$/,
+  // Pesquisa global do cabeçalho.
+  /^\/busca$/,
 ];
 
 @Injectable()

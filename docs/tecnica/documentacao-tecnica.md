@@ -75,20 +75,20 @@ Camadas:
 > frontend (ver `.kiro/steering/tech.md`). O backend Python descrito abaixo
 > continua no ar e é migrado domínio por domínio; enquanto isso, a API NestJS
 > repassa ao FastAPI os caminhos ainda não portados
-> (`apps/api/src/app/legacy/`). Situação em 12/08/2026: **57 de 125 endpoints**
+> (`apps/api/src/app/legacy/`). Situação em 12/08/2026: **58 de 125 endpoints**
 > migrados — anotações internas (3), `/me` (1), usuários (5), advogados (8),
 > controle de prazos (3), auditoria/alertas (2), recurso/Decisão II (4),
-> Consulta Unificada (4), exportação para BI (4), cautelares (11) e
-> biblioteca (12).
+> Consulta Unificada (4), exportação para BI (4), cautelares (11),
+> biblioteca (12) e pesquisa global (1).
 >
-> **Os domínios que só usam o banco estão concluídos.** Os 68 restantes dependem
-> do cliente do SEI, ainda em Python: caixa de entrada (7), despachos (7),
-> documentos (6), fases (9), textos-padrão (11), processos em andamento (23),
-> busca (1) e histórico. Notificações (3) depende dele apenas em parte — a
-> listagem dispara uma varredura no SEI para detectar documentos externos.
+> **Os domínios que só usam o banco estão concluídos.** Os 67 restantes dependem
+> do cliente do SEI: caixa de entrada (7), despachos (7), documentos (6),
+> fases (9), textos-padrão (11), processos em andamento (23) e histórico.
+> Notificações (3) depende dele apenas em parte — a listagem dispara uma
+> varredura no SEI para detectar documentos externos.
 >
-> Portar `app/integrations/sei/client.py` (autenticação, token, retry e as
-> chamadas de processo e documento) é a maior dependência isolada que resta.
+> O cliente do SEI já está portado (v0.43), então essa dependência deixou de ser
+> bloqueio; o que resta é volume de endpoint.
 >
 > **Permissão e competência são camadas distintas.** A permissão do Gestão de
 > Acessos dá acesso ao endpoint e é reconfigurável sem deploy. A competência
@@ -405,6 +405,8 @@ Próximos passos:
 - **Exportação para Power BI** — futura integração.
 
 ## 14. Histórico de atualizações
+
+- agosto/2026 — v0.44: **Pesquisa global do cabeçalho migrada (`GET /busca`), com dois defeitos herdados corrigidos no caminho.** A regra do endpoint é desambiguar: um item da caixa de entrada pode responder por dois números SEI, o do relatório de fiscalização e, se houve instauração, o do processo sancionatório — quem digita o número do processo quer a tela do processo, e a resposta traz `tipo` e o `id_procedimento` correspondente para o frontend acertar o destino. Verificado ponta a ponta contra o PostgreSQL: o item 900002 devolve `tipo: "processo"` com `PROC-999` quando pesquisado por `999.888/2025`, e `tipo: "relatorio"` com `PROC-2` quando pesquisado por `140.002`. **O service usa SQL em vez do query builder** porque a busca por número precisa ignorar a máscara nos dois lados, e o `where` do Prisma não aplica função a coluna; `TRANSLATE(col, './- ', '')` substitui os quatro `REPLACE` encadeados que o Python montava para funcionar também em SQLite. Filtrar em memória não era alternativa: o frontend consulta a cada 300 ms de digitação. **Primeiro defeito corrigido — `NULLS LAST`:** no SQLite, banco de produção hoje, NULL é o menor valor e `DESC` já o joga para o fim; no PostgreSQL o padrão de `DESC` é `NULLS FIRST`, então a mesma ordenação traria os itens sem data de recebimento na frente, ocupando as primeiras sugestões e empurrando as correspondências reais para fora do limite de 10. Confirmado no banco com a contraprova, e há teste sobre a cláusula. Acrescentado também desempate por `id`, que o FastAPI não tinha — sem ele, itens de mesma data trocavam de posição entre consultas idênticas e mudavam quem caía dentro do limite. **Segundo defeito corrigido — `conteudo_html`:** o Python fazia `select(CaixaEntrada)`, que traz todas as colunas, inclusive o HTML do relatório, acima de 1 MB por item; cada tecla digitada carregava dezenas de megabytes para devolver oito campos curtos. A consulta agora nomeia as nove colunas usadas. **Guarda preservada:** a condição sobre CNPJ/CPF só entra quando o termo tem dígito — sem isso, pesquisar por nome compararia a coluna com `'%%'`, que casa com qualquer valor não nulo, e a pesquisa por razão social devolveria a tabela inteira. `total` continua sendo o tamanho da página, e não a contagem de correspondências, como o FastAPI devolvia. Permissão nova `processamento:busca:consultar` (o Python não tinha camada de permissão); negativa verificada com o usuário `analista@`, que recebe 403 no formato `{detail:{...}}` do FastAPI. Confirmado que a rota `/caixa-entrada`, não migrada, continua indo para a ponte — o padrão em `ROTAS_MIGRADAS` é ancorado e não foi alargado. 147 testes Jest + 79 Vitest + 450 pytest.
 
 - agosto/2026 — v0.43: **Cliente do SEI portado para o NestJS — a dependência que travava os 68 endpoints restantes.** Em `apps/api/src/integrations/sei/`, dividido em três camadas: classificação de erro, camada HTTP (token, cabeçalhos, repetição) e as 24 chamadas de negócio. **A regra central é que só leitura repete**, e o parâmetro é obrigatório sem valor padrão, para quem escrever uma chamada nova ter de decidir: uma escrita que falhou por timeout pode ter sido concluída no servidor — o que se perdeu foi a resposta, não a ação —, e repetir criaria processo ou documento duplicado no SEI, desfeito só manualmente. A classificação temporário x definitivo chega até a tela pelo campo `temporario`, que o `DespachoModal` usa para decidir se mantém o botão Confirmar habilitado; errar custa nos dois sentidos, perda do texto digitado ou duplicação no SEI. **Três achados registrados no código:** o SEI publica **três hosts** (`sei-processos`, `sei-documentos`, `sei-parametros`) e chamar o errado devolve 404, que parece "processo não existe" — os três são derivados de `SEI_API_BASE`, com teste garantindo que apontar a base para homologação leve os três para homologação, porque documentos em produção com processos em teste leria documento real de processo fictício; o SEI devolve **JSON inválido** quando o nome de um documento foi cadastrado com Enter no meio, e o `json.loads(strict=False)` do Python não tem equivalente em JavaScript, então foi escrito um interpretador que escapa controles apenas DENTRO de string, preservando a quebra de linha entre campos, que é espaço em branco legítimo (sem isso o analista via "documento não encontrado" para documento existente); e **consultar documento não repete**, mesmo sendo leitura, porque unidade sem acesso recebe 500 e repetir na mesma unidade não muda nada — tentar outra é mais rápido que três esperas. A configuração **não** é validada na inicialização: domínios já migrados que não tocam o SEI (biblioteca, usuários, auditoria) precisam funcionar em desenvolvimento sem credencial, então a exigência acontece na primeira chamada e o erro nomeia as variáveis que faltam. **Valor suspeito preservado:** o backend Python envia `sinDiasUteis: "N+"` quando o prazo não é em dias úteis, com um `+` que aparenta erro de digitação; mantido e marcado no código, porque sem credencial não há como verificar contra o SEI e, se a API validar estritamente, o comportamento atual é o que está em uso. 124 testes Jest + 79 Vitest + 450 pytest.
 

@@ -16,6 +16,7 @@ import { AnotacoesModule } from "./anotacoes/anotacoes.module";
 import { AuditoriaModule } from "./auditoria/auditoria.module";
 import { AuthModule } from "./auth/auth.module";
 import { BibliotecaModule } from "./biblioteca/biblioteca.module";
+import { BuscaModule } from "./busca/busca.module";
 import { CautelaresModule } from "./cautelares/cautelares.module";
 import { ConsultaUnificadaModule } from "./consulta-unificada/consulta-unificada.module";
 import { ExportacaoModule } from "./exportacao/exportacao.module";
@@ -57,6 +58,7 @@ import { HealthController } from "./health.controller";
     ExportacaoModule,
     CautelaresModule,
     BibliotecaModule,
+    BuscaModule,
 
     // LegacyModule vem por ÚLTIMO: ele repassa ao FastAPI tudo que ainda não
     // foi portado. Remover quando a migração terminar.

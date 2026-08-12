@@ -142,7 +142,11 @@ VALUES
     -- ainda se exige ser o autor do item ou da coordenação.
     ('processamento:biblioteca:consultar', 'processamento', 'Consultar o acervo de referência',   TRUE),
     ('processamento:biblioteca:cadastrar', 'processamento', 'Cadastrar e editar itens do acervo', TRUE),
-    ('processamento:biblioteca:excluir',   'processamento', 'Excluir item do acervo',             TRUE)
+    ('processamento:biblioteca:excluir',   'processamento', 'Excluir item do acervo',             TRUE),
+
+    -- Pesquisa global do cabeçalho. Aparece em toda tela, então na prática
+    -- acompanha qualquer perfil que use o sistema.
+    ('processamento:busca:consultar', 'processamento', 'Usar a pesquisa global do cabeçalho', TRUE)
 ON CONFLICT (identificador) DO NOTHING;
 
 INSERT INTO gestao_acessos_v2.tb_usuarios (nome, email, oid, ativo)
