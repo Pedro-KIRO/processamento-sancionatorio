@@ -1,4 +1,5 @@
--- Dados para conferir a pesquisa global contra o PostgreSQL de verdade.
+-- Itens da caixa de entrada para conferir a pesquisa global e a listagem de
+-- documentos contra o PostgreSQL de verdade.
 --
 -- Cada linha existe por um motivo:
 --   1  relatório ainda na triagem, sem processo instaurado
@@ -7,9 +8,11 @@
 --   3  máscara diferente da digitada (espaço no lugar da barra)
 --   4  sem data de recebimento — comprova o NULLS LAST
 --   5  razão social que casa por texto, com número que não casa por dígito
+--   6  sem id_procedimento — a listagem de documentos devolve lista vazia, e não
+--      404, porque o item existe e apenas nunca foi vinculado a um processo
 BEGIN;
 
-DELETE FROM processamento.caixa_entrada WHERE id BETWEEN 900001 AND 900005;
+DELETE FROM processamento.caixa_entrada WHERE id BETWEEN 900001 AND 900006;
 
 INSERT INTO processamento.caixa_entrada
   (id, numero_sei, numero_processo_sei, id_procedimento,
@@ -34,6 +37,10 @@ VALUES
 
   (900005, '777.777/2020', NULL, 'PROC-5', NULL,
    'AUTO ESCOLA EPSILON', '33.444.555/0001-66', 'Autoescola',
-   'arquivado', '2026-07-20');
+   'arquivado', '2026-07-20'),
+
+  (900006, '140.006/2024', NULL, NULL, NULL,
+   'SEM PROCEDIMENTO SA', '44.555.666/0001-77', 'Despachante',
+   'pendente', '2026-07-15');
 
 COMMIT;

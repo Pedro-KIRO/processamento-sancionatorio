@@ -91,26 +91,56 @@ export class SeiService {
   }
 
   /**
-   * Andamentos do processo.
-   *
-   * `completo` traz a lista inteira, do mais recente para o mais antigo — é dela
+   * Andamentos do processo, do mais recente para o mais antigo — é dessa ordem
    * que saem a data de criação (último item) e a data da última ação (primeiro).
+   *
+   * Serve a dois usos distintos, conforme os parâmetros: sem `tarefas` devolve o
+   * histórico do processo; com `tarefas: "2,13,33"` devolve os andamentos de
+   * documento, que é como se monta a lista de documentos.
    */
   listarAndamentos(
     numero: unknown,
     idUnidade: string | number,
-    opcoes: { completo?: boolean; limit?: number; start?: number } = {},
+    opcoes: {
+      limit?: number;
+      /** Índice da PÁGINA (0, 1, 2...), não deslocamento de itens. */
+      start?: number;
+      /** `"R"` só remessas, `"Z"` todos. */
+      tipoHistorico?: string;
+      /**
+       * Filtro por tipo de andamento, separado por vírgula. `"2,13,33"` traz
+       * geração de documento interno, de externo e exclusão — é assim que a
+       * lista de documentos de um processo é montada, já que o SEI não expõe
+       * "documentos do processo" como recurso próprio.
+       */
+      tarefas?: string;
+      /** `"S"` faz o SEI incluir `atributoAndamento` em cada item. */
+      retornaAtributos?: string;
+    } = {},
   ): Promise<RespostaSei> {
-    const numeroLimpo = this.limpar(numero);
+    /*
+      O processo vai em `protocoloProcedimento`, na QUERY, e o caminho é fixo.
 
+      Não existe `/processos/{numero}/andamentos` no SEI: andamento é recurso de
+      primeiro nível e o processo é filtro. Montar o número no caminho devolve
+      404, que numa consulta de processo se lê como "processo não existe" — foi
+      assim que este erro passou despercebido até alguém precisar da lista de
+      documentos.
+
+      Os defaults acompanham o backend Python: `tipoHistorico: "Z"` (todos os
+      andamentos) e `retornaAtributos: "S"`, sem o qual o SEI omite
+      `atributoAndamento` e o número do documento não vem em lugar nenhum.
+    */
     return this.http.executar<RespostaSei>({
-      caminho: opcoes.completo
-        ? `/processos/${numeroLimpo}/andamentos/completo`
-        : `/processos/${numeroLimpo}/andamentos`,
+      caminho: "/andamentos/completo",
       idUnidade,
       query: {
+        protocoloProcedimento: String(this.limpar(numero)),
+        retornaAtributos: opcoes.retornaAtributos ?? "S",
+        tipoHistorico: opcoes.tipoHistorico ?? "Z",
         limit: opcoes.limit,
         start: opcoes.start,
+        tarefas: opcoes.tarefas,
       },
       podeRepetir: true,
     });
@@ -176,18 +206,24 @@ export class SeiService {
   }
 
   /**
-   * Bytes de um documento externo (PDF anexado ao processo).
+   * Bytes de um documento externo (PDF anexado ao processo), com o tipo do
+   * arquivo.
    *
    * Devolve `Buffer` em vez do base64 que o backend Python monta: quem consome
    * precisa dos bytes para servir o arquivo, e converter para texto e de volta
    * só gastaria memória — um PDF de 10 MB viraria 13 MB de base64.
+   *
+   * O `contentType` acompanha porque é a única fonte do formato do anexo: o
+   * metadado do documento traz o nome na árvore, não a extensão.
    */
   baixarAnexo(
     numeroDoc: unknown,
     idUnidade: string | number,
-  ): Promise<Buffer> {
-    return this.http.baixarBinario({
-      caminho: `/documentos/${this.limpar(numeroDoc)}/anexo`,
+  ): Promise<{ bytes: Buffer; contentType: string }> {
+    return this.http.baixarBinarioComTipo({
+      // "anexos", no plural — é o caminho publicado pelo SEI. No singular
+      // responde 404, que quem chama lê como "documento sem anexo".
+      caminho: `/documentos/${this.limpar(numeroDoc)}/anexos`,
       idUnidade,
       api: "documentos",
       podeRepetir: false,

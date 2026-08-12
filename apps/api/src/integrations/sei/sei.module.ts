@@ -1,5 +1,6 @@
 import { Global, Module } from "@nestjs/common";
 
+import { CacheSeiService } from "./cache-sei.service";
 import { SeiConfigService } from "./sei-config.service";
 import { SeiHttpService } from "./sei-http.service";
 import { SeiService } from "./sei.service";
@@ -17,7 +18,7 @@ import { SeiService } from "./sei.service";
  */
 @Global()
 @Module({
-  providers: [SeiConfigService, SeiHttpService, SeiService],
-  exports: [SeiService, SeiHttpService, SeiConfigService],
+  providers: [SeiConfigService, SeiHttpService, SeiService, CacheSeiService],
+  exports: [SeiService, SeiHttpService, SeiConfigService, CacheSeiService],
 })
 export class SeiModule {}

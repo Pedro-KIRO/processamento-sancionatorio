@@ -146,7 +146,11 @@ VALUES
 
     -- Pesquisa global do cabeçalho. Aparece em toda tela, então na prática
     -- acompanha qualquer perfil que use o sistema.
-    ('processamento:busca:consultar', 'processamento', 'Usar a pesquisa global do cabeçalho', TRUE)
+    ('processamento:busca:consultar', 'processamento', 'Usar a pesquisa global do cabeçalho', TRUE),
+
+    -- Documentos do SEI: listar, ler e baixar. Uma permissão só, porque as três
+    -- ações são leitura do mesmo acervo.
+    ('processamento:documentos:consultar', 'processamento', 'Consultar e baixar documentos do SEI', TRUE)
 ON CONFLICT (identificador) DO NOTHING;
 
 INSERT INTO gestao_acessos_v2.tb_usuarios (nome, email, oid, ativo)

@@ -1,5 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 
+import { SeiNaoConfiguradoError } from "./sei-errors";
+
 /**
  * Configuração de conexão com o SEI, lida das variáveis de ambiente.
  *
@@ -82,7 +84,7 @@ export class SeiConfigService {
     if (!this.clientSecret) faltando.push("SEI_CLIENT_SECRET");
     if (!this.apiBase) faltando.push("SEI_API_BASE");
 
-    throw new Error(
+    throw new SeiNaoConfiguradoError(
       `Integração com o SEI não configurada. Falta preencher no .env: ${faltando.join(", ")}.`,
     );
   }

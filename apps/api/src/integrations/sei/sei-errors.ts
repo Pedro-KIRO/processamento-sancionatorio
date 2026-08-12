@@ -13,6 +13,26 @@
       e cada tentativa pode criar processo ou documento duplicado no SEI.
 */
 
+/**
+ * A integração com o SEI não está configurada no ambiente.
+ *
+ * Tem classe própria porque NÃO é falha do SEI: é variável de ambiente faltando
+ * na nossa instalação, e nenhuma tentativa posterior resolve.
+ *
+ * A distinção importa em quem trata falha do SEI de forma tolerante. A listagem
+ * de documentos, por exemplo, engole erro do SEI e devolve os documentos que já
+ * conseguiu montar, porque a aba é uma parte da tela e derrubar tudo seria pior.
+ * Se a falta de credencial entrasse nesse mesmo caminho, esquecer uma variável
+ * em homologação apareceria como "este processo não tem documentos" — e ninguém
+ * procuraria uma variável de ambiente a partir desse sintoma.
+ */
+export class SeiNaoConfiguradoError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SeiNaoConfiguradoError";
+  }
+}
+
 /** Falha ao obter o token de acesso do SEI. */
 export class SeiAuthError extends Error {
   constructor(message: string) {

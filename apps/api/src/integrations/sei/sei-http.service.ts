@@ -211,6 +211,20 @@ export class SeiHttpService {
 
   /** Baixa conteúdo binário (documento, anexo). */
   async baixarBinario(opcoes: OpcoesChamada): Promise<Buffer> {
+    return (await this.baixarBinarioComTipo(opcoes)).bytes;
+  }
+
+  /**
+   * Igual a `baixarBinario`, mas também devolve o `Content-Type` da resposta.
+   *
+   * O tipo é necessário para servir o arquivo: é dele que sai a extensão do nome
+   * sugerido no download e a decisão de concatenar ou não o documento num PDF.
+   * O SEI não informa o formato do anexo em nenhum outro lugar — o metadado do
+   * documento traz o nome na árvore, não o tipo do arquivo.
+   */
+  async baixarBinarioComTipo(
+    opcoes: OpcoesChamada,
+  ): Promise<{ bytes: Buffer; contentType: string }> {
     this.config.exigirConfigurado();
 
     const url = this.montarUrl(opcoes.caminho, opcoes.query, opcoes.api);
@@ -230,7 +244,14 @@ export class SeiHttpService {
       throw deRespostaHttp(resposta.status, corpo);
     }
 
-    return Buffer.from(await resposta.arrayBuffer());
+    return {
+      bytes: Buffer.from(await resposta.arrayBuffer()),
+      // Sem cabeçalho, trata como binário genérico em vez de adivinhar: um
+      // palpite errado renomearia um PDF para .html e o arquivo baixado não
+      // abriria.
+      contentType:
+        resposta.headers.get("content-type") ?? "application/octet-stream",
+    };
   }
 
   // ==========================================================================

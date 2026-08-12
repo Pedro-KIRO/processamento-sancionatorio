@@ -75,20 +75,26 @@ Camadas:
 > frontend (ver `.kiro/steering/tech.md`). O backend Python descrito abaixo
 > continua no ar e é migrado domínio por domínio; enquanto isso, a API NestJS
 > repassa ao FastAPI os caminhos ainda não portados
-> (`apps/api/src/app/legacy/`). Situação em 12/08/2026: **58 de 125 endpoints**
+> (`apps/api/src/app/legacy/`). Situação em 12/08/2026: **61 de 125 endpoints**
 > migrados — anotações internas (3), `/me` (1), usuários (5), advogados (8),
 > controle de prazos (3), auditoria/alertas (2), recurso/Decisão II (4),
 > Consulta Unificada (4), exportação para BI (4), cautelares (11),
-> biblioteca (12) e pesquisa global (1).
+> biblioteca (12), pesquisa global (1) e documentos: listar, ler e baixar (3).
 >
-> **Os domínios que só usam o banco estão concluídos.** Os 67 restantes dependem
-> do cliente do SEI: caixa de entrada (7), despachos (7), documentos (6),
-> fases (9), textos-padrão (11), processos em andamento (23) e histórico.
-> Notificações (3) depende dele apenas em parte — a listagem dispara uma
-> varredura no SEI para detectar documentos externos.
+> **Os domínios que só usam o banco estão concluídos.** Restam 64: caixa de
+> entrada (7), despachos (7), fases (9), textos-padrão (11), processos em
+> andamento (23), histórico e os 3 de documentos que geram arquivo composto
+> (dois `download-todos` em ZIP e o conjunto probatório em PDF). Notificações (3)
+> depende do SEI apenas em parte — a listagem dispara uma varredura para
+> detectar documentos externos.
 >
 > O cliente do SEI já está portado (v0.43), então essa dependência deixou de ser
-> bloqueio; o que resta é volume de endpoint.
+> bloqueio; o que resta é volume de endpoint mais **uma decisão pendente**: os
+> três endpoints de arquivo composto precisam de biblioteca de ZIP (`archiver`) e
+> de conversão HTML→PDF. O Python usa `xhtml2pdf`, e em Node não há equivalente
+> puro — a alternativa real é Puppeteer, que exige Chromium na imagem do
+> contêiner (cerca de 300 MB e bibliotecas de sistema). Decisão de arquitetura
+> com impacto no deploy, então fica registrada em vez de escolhida.
 >
 > **Permissão e competência são camadas distintas.** A permissão do Gestão de
 > Acessos dá acesso ao endpoint e é reconfigurável sem deploy. A competência
@@ -405,6 +411,8 @@ Próximos passos:
 - **Exportação para Power BI** — futura integração.
 
 ## 14. Histórico de atualizações
+
+- agosto/2026 — v0.45: **Documentos do SEI migrados (listar, ler e baixar) — e dois defeitos no cliente do SEI que estavam latentes desde a v0.43.** O primeiro: `listarAndamentos` montava `/processos/{numero}/andamentos`, endpoint que não existe. O correto é `GET /andamentos/completo` com o processo em `protocoloProcedimento` na query — andamento é recurso de primeiro nível no SEI e o processo é filtro. Ninguém chamava o método ainda, então o erro nunca apareceu; teria aparecido como 404, que numa consulta de processo se lê como "processo não existe". Faltavam também os defaults `retornaAtributos: "S"` (sem ele o SEI omite `atributoAndamento`, e o número do documento não vem em lugar nenhum) e `tipoHistorico: "Z"`. O segundo defeito: `baixarAnexo` usava `/documentos/{n}/anexo` no singular; o caminho publicado é `/anexos`. Ambos conferidos contra `api-sei.md` e o cliente Python. **A listagem de documentos é derivada, não consultada:** o SEI não expõe "documentos do processo" como recurso, então a lista sai dos andamentos filtrados por tarefa — 2 é geração de documento interno, 13 é juntada de externo, 33 é exclusão, e o resultado é o conjunto dos gerados menos os excluídos. O nome de cada documento é extraído do trecho entre parênteses da descrição do andamento, o que evita uma chamada de metadado por documento: numa aba com 40 documentos, troca 40 requisições por uma. **Correção de robustez:** o laço de paginação do Python não tinha teto e avançava enquanto o SEI devolvesse página cheia — uma resposta sempre cheia deixaria a requisição girando até o timeout, prendendo conexão do pool; agora para em 50 páginas (5.000 andamentos) e registra aviso. **A decisão que mais muda operação:** falta de credencial deixou de ser confundida com instabilidade do SEI. A listagem engole erro do SEI de propósito, porque a aba é uma parte da tela de análise e derrubar a requisição apagaria tudo — mas com isso esquecer `SEI_CLIENT_ID` em homologação aparecia como "este processo não tem documentos", sintoma a partir do qual ninguém procura variável de ambiente. Foi criada a classe `SeiNaoConfiguradoError`, que atravessa como 503 nomeando as variáveis que faltam; verificado na API rodando, a resposta é `{"detail":"...Falta preencher no .env: SEI_CLIENT_ID, SEI_CLIENT_SECRET."}`. Pelo mesmo motivo, a tentativa entre as seis unidades desiste na primeira quando o problema é configuração, em vez de repetir seis vezes o que não pode dar certo. **Nome de arquivo saneado:** o nome vem do SEI e entra entre aspas no `Content-Disposition`; aspas, quebra de linha ou barra permitiriam injetar cabeçalho ou escapar do diretório ao salvar. **Cache portado** (`cache-sei.service.ts`): conteúdo de documento sem expiração, porque documento registrado no SEI não muda; listas com 5 minutos, porque crescem conforme o processo anda. Falha de cache nunca propaga — é otimização, e trocar resposta lenta por tela de erro seria pior. Verificado na API rodando que os dois `download-todos` continuam indo para a ponte (502) enquanto o download individual é atendido pelo Nest (503 do SEI), o que confirma que os padrões ancorados de `ROTAS_MIGRADAS` não foram alargados. 190 testes Jest + 79 Vitest + 450 pytest.
 
 - agosto/2026 — v0.44: **Pesquisa global do cabeçalho migrada (`GET /busca`), com dois defeitos herdados corrigidos no caminho.** A regra do endpoint é desambiguar: um item da caixa de entrada pode responder por dois números SEI, o do relatório de fiscalização e, se houve instauração, o do processo sancionatório — quem digita o número do processo quer a tela do processo, e a resposta traz `tipo` e o `id_procedimento` correspondente para o frontend acertar o destino. Verificado ponta a ponta contra o PostgreSQL: o item 900002 devolve `tipo: "processo"` com `PROC-999` quando pesquisado por `999.888/2025`, e `tipo: "relatorio"` com `PROC-2` quando pesquisado por `140.002`. **O service usa SQL em vez do query builder** porque a busca por número precisa ignorar a máscara nos dois lados, e o `where` do Prisma não aplica função a coluna; `TRANSLATE(col, './- ', '')` substitui os quatro `REPLACE` encadeados que o Python montava para funcionar também em SQLite. Filtrar em memória não era alternativa: o frontend consulta a cada 300 ms de digitação. **Primeiro defeito corrigido — `NULLS LAST`:** no SQLite, banco de produção hoje, NULL é o menor valor e `DESC` já o joga para o fim; no PostgreSQL o padrão de `DESC` é `NULLS FIRST`, então a mesma ordenação traria os itens sem data de recebimento na frente, ocupando as primeiras sugestões e empurrando as correspondências reais para fora do limite de 10. Confirmado no banco com a contraprova, e há teste sobre a cláusula. Acrescentado também desempate por `id`, que o FastAPI não tinha — sem ele, itens de mesma data trocavam de posição entre consultas idênticas e mudavam quem caía dentro do limite. **Segundo defeito corrigido — `conteudo_html`:** o Python fazia `select(CaixaEntrada)`, que traz todas as colunas, inclusive o HTML do relatório, acima de 1 MB por item; cada tecla digitada carregava dezenas de megabytes para devolver oito campos curtos. A consulta agora nomeia as nove colunas usadas. **Guarda preservada:** a condição sobre CNPJ/CPF só entra quando o termo tem dígito — sem isso, pesquisar por nome compararia a coluna com `'%%'`, que casa com qualquer valor não nulo, e a pesquisa por razão social devolveria a tabela inteira. `total` continua sendo o tamanho da página, e não a contagem de correspondências, como o FastAPI devolvia. Permissão nova `processamento:busca:consultar` (o Python não tinha camada de permissão); negativa verificada com o usuário `analista@`, que recebe 403 no formato `{detail:{...}}` do FastAPI. Confirmado que a rota `/caixa-entrada`, não migrada, continua indo para a ponte — o padrão em `ROTAS_MIGRADAS` é ancorado e não foi alargado. 147 testes Jest + 79 Vitest + 450 pytest.
 
