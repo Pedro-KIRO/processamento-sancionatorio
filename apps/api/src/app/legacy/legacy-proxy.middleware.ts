@@ -82,17 +82,21 @@ export const ROTAS_MIGRADAS: readonly RegExp[] = [
   /^\/biblioteca\/\d+\/versoes\/\d+\/restaurar$/,
   // Pesquisa global do cabeçalho.
   /^\/busca$/,
-  /*
-    Documentos do SEI: listagem, leitura e download.
-
-    Repare no que NÃO está aqui: `/caixa-entrada/\d+/documentos/download-todos`
-    e `/processos-andamento/\d+/documentos/download-todos` continuam no Python,
-    porque geram ZIP e PDF unificado. Por isso o primeiro padrão termina em `$` —
-    sem a âncora, ele engoliria o download-todos e o ZIP passaria a responder 404.
-  */
+  // Documentos do SEI: listagem, leitura, download individual e em ZIP.
   /^\/caixa-entrada\/\d+\/documentos$/,
+  /^\/caixa-entrada\/\d+\/documentos\/download-todos$/,
   /^\/documentos\/[^/]+\/conteudo$/,
   /^\/documentos\/[^/]+\/download$/,
+  /*
+    Duas rotas de `/processos-andamento`, e SÓ estas duas.
+
+    Os outros 23 endpoints daquele domínio seguem no Python, então os padrões são
+    o caminho completo e ancorado. Um padrão largo como
+    `/^\/processos-andamento\/\d+/` engoliria todos eles, que passariam a
+    responder 404.
+  */
+  /^\/processos-andamento\/\d+\/documentos\/download-todos$/,
+  /^\/processos-andamento\/\d+\/incluir-conjunto-probatorio$/,
 ];
 
 @Injectable()

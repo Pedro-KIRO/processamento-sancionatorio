@@ -1,8 +1,10 @@
 // Importa de "@jest/globals" em vez de usar as globais do Jest — ver a nota em
 // anotacoes.service.spec.ts.
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { NotFoundException } from "@nestjs/common";
+import { beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { PDFDocument } from "pdf-lib";
 
+import { HtmlParaPdfService } from "../../integrations/pdf/html-para-pdf.service";
 import { CacheSeiService } from "../../integrations/sei/cache-sei.service";
 import { SeiNaoConfiguradoError } from "../../integrations/sei/sei-errors";
 import { SeiService } from "../../integrations/sei/sei.service";
@@ -43,8 +45,18 @@ function seiFalso() {
     consultarDocumento: jest.fn(),
     baixarConteudo: jest.fn(),
     baixarAnexo: jest.fn(),
+    enviarArquivo: jest.fn(),
+    incluirDocumentoExterno: jest.fn(),
   };
 }
+
+/**
+ * PDF real de uma página.
+ *
+ * Os testes de junção precisam de PDF que o pdf-lib consiga abrir — um buffer
+ * qualquer cairia no caminho de falha e não exercitaria a concatenação.
+ */
+let pdfDeUmaPagina: Buffer;
 
 /** Cache dublê que nunca tem nada guardado, para exercitar o caminho real. */
 function cacheFalso() {
@@ -189,16 +201,25 @@ describe("DocumentosService", () => {
   let prisma: ReturnType<typeof prismaFalso>;
   let sei: ReturnType<typeof seiFalso>;
   let cache: ReturnType<typeof cacheFalso>;
+  let html: { converter: ReturnType<typeof jest.fn> };
   let service: DocumentosService;
+
+  beforeAll(async () => {
+    const documento = await PDFDocument.create();
+    documento.addPage([595, 842]);
+    pdfDeUmaPagina = Buffer.from(await documento.save());
+  });
 
   beforeEach(() => {
     prisma = prismaFalso();
     sei = seiFalso();
     cache = cacheFalso();
+    html = { converter: jest.fn() };
     service = new DocumentosService(
       prisma as unknown as PrismaService,
       sei as unknown as SeiService,
       cache as unknown as CacheSeiService,
+      html as unknown as HtmlParaPdfService,
     );
   });
 
@@ -614,6 +635,320 @@ describe("DocumentosService", () => {
       expect(sei.consultarDocumento.mock.calls[tentativasPrimeira][1]).toBe(
         UNIDADE_BOA,
       );
+    });
+  });
+
+  describe("gerarZip", () => {
+    beforeEach(() => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111"), andamento("13", "222")],
+      } as never);
+      sei.consultarDocumento.mockResolvedValue({ nomeArvore: "DOC" } as never);
+      sei.baixarConteudo.mockResolvedValue({ conteudo: "PGh0bWw+" } as never);
+      sei.baixarAnexo.mockResolvedValue({
+        bytes: Buffer.from("%PDF-1.4"),
+        contentType: "application/pdf",
+      } as never);
+    });
+
+    it("monta um ZIP de verdade", async () => {
+      const zip = await service.gerarZip("PROC-1", "110053117", "docs.zip");
+
+      // "PK" é a assinatura do formato ZIP.
+      expect(zip.subarray(0, 2).toString()).toBe("PK");
+      expect(zip.length).toBeGreaterThan(0);
+    });
+
+    /*
+      Documento que não baixa entra como .txt com o motivo, em vez de faltar.
+
+      Um ZIP com 12 dos 15 documentos e nenhuma explicação parece completo, e quem
+      confere o processo não tem como notar a ausência.
+    */
+    it("inclui um arquivo de erro para o documento que não baixa", async () => {
+      sei.baixarAnexo.mockRejectedValue(new Error("sem acesso") as never);
+      sei.baixarConteudo
+        .mockResolvedValueOnce({ conteudo: "PGh0bWw+" } as never)
+        .mockRejectedValue(new Error("sem acesso") as never);
+
+      const zip = await service.gerarZip("PROC-1", "110053117", "docs.zip");
+      const texto = zip.toString("latin1");
+
+      // O nome do arquivo aparece no índice do ZIP mesmo com o conteúdo
+      // comprimido.
+      expect(texto).toContain("ERRO_222.txt");
+    });
+
+    it("dá 404 quando o processo não tem documento", async () => {
+      sei.listarAndamentos.mockResolvedValue({ Andamentos: [] } as never);
+
+      await expect(
+        service.gerarZip("PROC-1", "110053117", "docs.zip"),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("gerarPdfUnificado", () => {
+    beforeEach(() => {
+      sei.consultarDocumento.mockResolvedValue({ nomeArvore: "DOC" } as never);
+      html.converter.mockResolvedValue(pdfDeUmaPagina as never);
+    });
+
+    it("converte documento interno e concatena com o externo", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("13", "222"), andamento("2", "111")],
+      } as never);
+      sei.baixarConteudo.mockResolvedValue({
+        // "<html>x</html>" em base64.
+        conteudo: Buffer.from("<html>x</html>").toString("base64"),
+      } as never);
+      sei.baixarAnexo.mockResolvedValue({
+        bytes: pdfDeUmaPagina,
+        contentType: "application/pdf",
+      } as never);
+
+      const r = await service.gerarPdfUnificado("PROC-1", "110053117");
+
+      expect(r.incluidos).toBe(2);
+      expect(r.paginas).toBe(2);
+      expect(html.converter).toHaveBeenCalledTimes(1);
+    });
+
+    /*
+      Formato que não é PDF nem HTML não tem como ser concatenado. Precisa ser
+      reportado, não descartado em silêncio: é peça que talvez tenha de ser
+      anexada à mão.
+    */
+    it("reporta formato não concatenável em vez de descartar", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("13", "222"), andamento("2", "111")],
+      } as never);
+      sei.baixarConteudo.mockResolvedValue({
+        conteudo: Buffer.from("<html>x</html>").toString("base64"),
+      } as never);
+      sei.baixarAnexo.mockResolvedValue({
+        bytes: Buffer.from("PK planilha"),
+        contentType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      } as never);
+
+      const r = await service.gerarPdfUnificado("PROC-1", "110053117");
+
+      expect(r.incluidos).toBe(1);
+      expect(r.falhas).toHaveLength(1);
+      expect(r.falhas[0].motivo).toContain("não concatenável");
+    });
+
+    /*
+      Falha da conversão é por documento: derrubar o conjunto entregaria nada
+      quando o que se quer é o que deu para reunir.
+    */
+    it("segue quando a conversão de um documento falha", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111"), andamento("2", "222")],
+      } as never);
+      sei.baixarConteudo.mockResolvedValue({
+        conteudo: Buffer.from("<html>x</html>").toString("base64"),
+      } as never);
+      html.converter
+        .mockResolvedValueOnce(pdfDeUmaPagina as never)
+        .mockRejectedValueOnce(new Error("PDF sairia em branco") as never);
+
+      const r = await service.gerarPdfUnificado("PROC-1", "110053117");
+
+      expect(r.incluidos).toBe(1);
+      expect(r.falhas).toHaveLength(1);
+      expect(r.falhas[0].motivo).toContain("em branco");
+    });
+
+    /*
+      Trava contra o desfecho pior: nenhum documento incluído tem de virar erro,
+      nunca um PDF de uma folha em branco apresentado como conjunto probatório.
+    */
+    it("dá 404 quando nenhum documento pôde ser convertido", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111")],
+      } as never);
+      sei.baixarConteudo.mockResolvedValue({
+        conteudo: Buffer.from("<html>x</html>").toString("base64"),
+      } as never);
+      html.converter.mockRejectedValue(new Error("falhou") as never);
+
+      await expect(
+        service.gerarPdfUnificado("PROC-1", "110053117"),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    /*
+      Documento antigo do SEI vem em ISO-8859-1. Ler como UTF-8 trocaria cada
+      acento por caractere de substituição, e o PDF sairia com "FISCALIZA??O".
+    */
+    it("decodifica ISO-8859-1 quando o documento declara esse charset", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111")],
+      } as never);
+      const htmlLatino = Buffer.from(
+        '<html><head><meta charset="iso-8859-1"></head><body>FISCALIZAÇÃO</body></html>',
+        "latin1",
+      );
+      sei.baixarConteudo.mockResolvedValue({
+        conteudo: htmlLatino.toString("base64"),
+      } as never);
+
+      await service.gerarPdfUnificado("PROC-1", "110053117");
+
+      expect(html.converter.mock.calls[0][0]).toContain("FISCALIZAÇÃO");
+    });
+
+    /*
+      Documento interno do SEI às vezes chega como application/octet-stream.
+      Confiar só no cabeçalho classificaria como formato desconhecido e deixaria
+      de fora justamente o corpo do processo.
+    */
+    it("reconhece HTML pelos bytes quando o content-type não diz", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("13", "222")],
+      } as never);
+      sei.baixarAnexo.mockResolvedValue({
+        bytes: Buffer.from("<html><body>x</body></html>"),
+        contentType: "application/octet-stream",
+      } as never);
+
+      const r = await service.gerarPdfUnificado("PROC-1", "110053117");
+
+      expect(r.incluidos).toBe(1);
+      expect(html.converter).toHaveBeenCalled();
+    });
+  });
+
+  describe("incluirConjuntoProbatorio", () => {
+    beforeEach(() => {
+      prisma.caixaEntrada.findUnique.mockResolvedValue({
+        id: 1,
+        numeroSei: "140.001/2024",
+        idProcedimento: "PROC-FISC",
+        idProcedimentoProcesso: "PROC-SANC",
+        idUnidadeSei: "110053117",
+      } as never);
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111")],
+      } as never);
+      sei.consultarDocumento.mockResolvedValue({ nomeArvore: "DOC" } as never);
+      sei.baixarConteudo.mockResolvedValue({
+        conteudo: Buffer.from("<html>x</html>").toString("base64"),
+      } as never);
+      html.converter.mockResolvedValue(pdfDeUmaPagina as never);
+      sei.enviarArquivo.mockResolvedValue("ARQ-1" as never);
+      sei.incluirDocumentoExterno.mockResolvedValue({
+        idDocumento: "DOC-9",
+        documentoFormatado: "9999999",
+        linkAcesso: "https://sei/9999999",
+      } as never);
+    });
+
+    /*
+      O upload e a inclusão precisam usar a MESMA unidade: o SEI valida e recusa
+      o vínculo se divergirem, com erro que não menciona unidade.
+    */
+    it("usa a mesma unidade no upload e na inclusão", async () => {
+      await service.incluirConjuntoProbatorio(1);
+
+      expect(sei.enviarArquivo.mock.calls[0][0]).toBe("110053117");
+      expect(sei.incluirDocumentoExterno.mock.calls[0][1]).toBe("110053117");
+    });
+
+    /*
+      Reúne os documentos do processo de FISCALIZAÇÃO e junta ao processo
+      SANCIONATÓRIO. Trocar a ordem anexaria o conjunto ao processo errado.
+    */
+    it("lê da fiscalização e escreve no processo instaurado", async () => {
+      await service.incluirConjuntoProbatorio(1);
+
+      expect(sei.listarAndamentos.mock.calls[0][0]).toBe("PROC-FISC");
+      expect(sei.incluirDocumentoExterno.mock.calls[0][0]).toBe("PROC-SANC");
+    });
+
+    it("devolve os identificadores do documento criado", async () => {
+      const r = await service.incluirConjuntoProbatorio(1);
+
+      expect(r).toMatchObject({
+        sucesso: true,
+        id_documento: "DOC-9",
+        documento_formatado: "9999999",
+        link_acesso: "https://sei/9999999",
+        docs_incluidos: 1,
+        total_docs: 1,
+      });
+      expect(r.aviso).toBeUndefined();
+    });
+
+    /*
+      O aviso não é enfeite: conjunto probatório incompleto que se apresenta como
+      completo é pior do que erro, porque quem assina não sabe o que ficou fora.
+    */
+    it("avisa quando algum documento ficou de fora", async () => {
+      sei.listarAndamentos.mockResolvedValue({
+        Andamentos: [andamento("2", "111"), andamento("2", "222")],
+      } as never);
+      html.converter
+        .mockResolvedValueOnce(pdfDeUmaPagina as never)
+        .mockRejectedValueOnce(new Error("falhou") as never);
+
+      const r = await service.incluirConjuntoProbatorio(1);
+
+      expect(r.docs_incluidos).toBe(1);
+      expect(r.total_docs).toBe(2);
+      expect(r.docs_falha).toHaveLength(1);
+      // Compara com o que falhou de fato, e não com um número fixo: a lista sai
+      // em ordem cronológica, então qual dos dois falha depende da ordenação — e
+      // o que importa é o aviso nomear o documento certo.
+      expect(r.aviso).toContain(r.docs_falha[0].numero);
+    });
+
+    /*
+      A lista de documentos do processo mudou. Sem invalidar, o usuário não veria
+      o documento que acabou de gerar e tentaria de novo, duplicando no SEI.
+    */
+    it("invalida o cache do processo instaurado", async () => {
+      await service.incluirConjuntoProbatorio(1);
+
+      expect(cache.invalidarProcesso).toHaveBeenCalledWith("PROC-SANC");
+    });
+
+    it("dá 400 quando o processo ainda não foi instaurado", async () => {
+      prisma.caixaEntrada.findUnique.mockResolvedValue({
+        id: 1,
+        numeroSei: "140.001/2024",
+        idProcedimento: "PROC-FISC",
+        idProcedimentoProcesso: null,
+        idUnidadeSei: "110053117",
+      } as never);
+
+      await expect(service.incluirConjuntoProbatorio(1)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(sei.enviarArquivo).not.toHaveBeenCalled();
+    });
+
+    it("dá 404 quando o item não existe", async () => {
+      prisma.caixaEntrada.findUnique.mockResolvedValue(null as never);
+
+      await expect(service.incluirConjuntoProbatorio(999)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    /*
+      Falha no upload não pode virar inclusão: sem idArquivo não há o que
+      vincular, e prosseguir criaria documento vazio no processo.
+    */
+    it("não tenta incluir quando o upload falha", async () => {
+      sei.enviarArquivo.mockRejectedValue(new Error("timeout") as never);
+
+      await expect(service.incluirConjuntoProbatorio(1)).rejects.toMatchObject({
+        status: 502,
+      });
+      expect(sei.incluirDocumentoExterno).not.toHaveBeenCalled();
     });
   });
 

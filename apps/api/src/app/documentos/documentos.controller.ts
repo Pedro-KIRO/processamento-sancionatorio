@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Post,
   Query,
   Res,
   UseGuards,
@@ -17,6 +18,7 @@ import {
   ConteudoDocumentoResposta,
   DocumentoResposta,
   nomeArquivoSeguro,
+  RespostaConjuntoProbatorio,
   TipoDocumento,
   TIPO_EXTERNO,
   TIPO_INTERNO,
@@ -92,6 +94,19 @@ export class DocumentosController {
 export class DocumentosCaixaEntradaController {
   constructor(private readonly documentos: DocumentosService) {}
 
+  // Caminho mais específico ANTES: registrado depois, `:itemId/documentos`
+  // casaria primeiro e o download-todos nunca seria alcançado.
+  @Get(":itemId/documentos/download-todos")
+  @RequirePermission("processamento:documentos:consultar")
+  async baixarTodos(
+    @Param("itemId", ParseIntPipe) itemId: number,
+    @Res() resposta: Response,
+  ): Promise<void> {
+    const { zip, nome } =
+      await this.documentos.gerarZipDoItemCaixaEntrada(itemId);
+    enviarZip(resposta, zip, nome);
+  }
+
   @Get(":itemId/documentos")
   @RequirePermission("processamento:documentos:consultar")
   listar(
@@ -99,4 +114,45 @@ export class DocumentosCaixaEntradaController {
   ): Promise<DocumentoResposta[]> {
     return this.documentos.listarPorItemCaixaEntrada(itemId);
   }
+}
+
+/**
+ * Documentos de um processo em andamento.
+ *
+ * Terceiro controller porque o caminho é `/processos-andamento/...`. O RESTO
+ * desse domínio segue no FastAPI, e os padrões em `ROTAS_MIGRADAS` cobrem apenas
+ * estas duas rotas.
+ */
+@Controller("processos-andamento")
+@UseGuards(UsuarioAtualGuard, PermissionGuard)
+export class DocumentosProcessoController {
+  constructor(private readonly documentos: DocumentosService) {}
+
+  @Get(":itemId/documentos/download-todos")
+  @RequirePermission("processamento:documentos:consultar")
+  async baixarTodos(
+    @Param("itemId", ParseIntPipe) itemId: number,
+    @Res() resposta: Response,
+  ): Promise<void> {
+    const { zip, nome } = await this.documentos.gerarZipDoProcesso(itemId);
+    enviarZip(resposta, zip, nome);
+  }
+
+  @Post(":itemId/incluir-conjunto-probatorio")
+  @RequirePermission("processamento:documentos:incluir-conjunto-probatorio")
+  incluirConjuntoProbatorio(
+    @Param("itemId", ParseIntPipe) itemId: number,
+  ): Promise<RespostaConjuntoProbatorio> {
+    return this.documentos.incluirConjuntoProbatorio(itemId);
+  }
+}
+
+function enviarZip(resposta: Response, zip: Buffer, nome: string): void {
+  resposta.setHeader("Content-Type", "application/zip");
+  resposta.setHeader("Content-Length", String(zip.length));
+  resposta.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${nomeArquivoSeguro(nome)}"`,
+  );
+  resposta.end(zip);
 }

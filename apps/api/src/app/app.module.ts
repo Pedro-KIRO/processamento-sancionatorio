@@ -9,6 +9,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
+import { PdfModule } from "../integrations/pdf/pdf.module";
 import { SeiModule } from "../integrations/sei/sei.module";
 import { PrismaModule } from "../shared/prisma.module";
 import { AdvogadosModule } from "./advogados/advogados.module";
@@ -44,6 +45,8 @@ import { HealthController } from "./health.controller";
     PerfisModule,
     // Integração com o SEI: global, usada por oito domínios.
     SeiModule,
+    // Geração de PDF sem navegador. Global pelo mesmo motivo do SEI.
+    PdfModule,
     // Módulos de domínio. Ao registrar um módulo aqui, acrescente também as
     // rotas dele em ROTAS_MIGRADAS (legacy-proxy.middleware.ts) — sem isso a
     // ponte continua repassando ao FastAPI e o código novo nunca é chamado.

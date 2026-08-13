@@ -1,11 +1,33 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 
+/*
+  `archiver` FIXADO EM 7, e não na 8.
+
+  A 8 é publicada apenas como ESM. Ela até funciona sob `require` no
+  `node:20-alpine` de hoje, porque o Node 20.20 aceita a mistura — mas isso
+  transforma "Node 20" numa exigência de patch mínimo não declarada em lugar
+  nenhum, e o Jest, que é CommonJS, não carrega o pacote de jeito nenhum: os
+  testes destes três endpoints deixariam de existir.
+
+  A 7 é CommonJS, tem a mesma função e mantém a API `archiver("zip", opcoes)`,
+  que é a que a documentação mostra.
+*/
+import archiver from "archiver";
+
+import { HtmlParaPdfService } from "../../integrations/pdf/html-para-pdf.service";
+import {
+  FalhaAoJuntar,
+  juntarPdfs,
+  PdfParaJuntar,
+  ResultadoJuncao,
+} from "../../integrations/pdf/juntar-pdfs";
 import {
   CacheSeiService,
   TTL_INFINITO,
@@ -13,11 +35,13 @@ import {
 } from "../../integrations/sei/cache-sei.service";
 import { SeiNaoConfiguradoError } from "../../integrations/sei/sei-errors";
 import { SeiService } from "../../integrations/sei/sei.service";
+import { chaveDoDia } from "../../shared/datas";
 import { PrismaService } from "../../shared/prisma.service";
 import {
   AndamentoSei,
   ConteudoDocumentoResposta,
   DocumentoResposta,
+  RespostaConjuntoProbatorio,
   extensaoPorContentType,
   extrairNomeDaDescricao,
   extrairNumeroDocumento,
@@ -47,6 +71,17 @@ const UNIDADES_CONSULTA = [
 
 /** Itens por página na consulta de andamentos, conforme a API do SEI. */
 const ITENS_POR_PAGINA = 100;
+
+/**
+ * Unidade usada no conjunto probatório quando o item não tem uma gravada.
+ *
+ * Mesmo valor do backend Python. É a unidade que na prática abriga os processos
+ * sancionatórios instaurados.
+ */
+const UNIDADE_PADRAO_CONJUNTO = "110053117";
+
+/** Série do SEI para "Anexo", que é como o conjunto probatório é juntado. */
+const SERIE_ANEXO = "1917";
 
 /**
  * Teto de páginas percorridas ao montar a lista de documentos.
@@ -79,6 +114,7 @@ export class DocumentosService {
     private readonly prisma: PrismaService,
     private readonly sei: SeiService,
     private readonly cache: CacheSeiService,
+    private readonly html: HtmlParaPdfService,
   ) {}
 
   // ==========================================================================
@@ -355,8 +391,424 @@ export class DocumentosService {
   }
 
   // ==========================================================================
+  // Arquivo composto: ZIP e PDF unificado
+  // ==========================================================================
+
+  /** ZIP dos documentos de um item da caixa de entrada. */
+  async gerarZipDoItemCaixaEntrada(
+    itemId: number,
+  ): Promise<{ zip: Buffer; nome: string }> {
+    const item = await this.prisma.caixaEntrada.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        numeroSei: true,
+        idProcedimento: true,
+        idUnidadeSei: true,
+        agenteRegulado: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException("Item não encontrado");
+    }
+    if (!item.idProcedimento) {
+      throw new NotFoundException("Nenhum documento disponível");
+    }
+
+    const idUnidade = await this.resolverUnidade(
+      item.idUnidadeSei,
+      item.agenteRegulado,
+    );
+    const nome = `documentos_${item.numeroSei ?? itemId}.zip`;
+
+    return {
+      zip: await this.gerarZip(item.idProcedimento, idUnidade, nome),
+      nome,
+    };
+  }
+
+  /**
+   * ZIP dos documentos de um processo em andamento.
+   *
+   * Usa o procedimento do processo SANCIONATÓRIO quando existe, e cai no da
+   * fiscalização enquanto não houve instauração — é o mesmo critério do backend
+   * Python (`_id_procedimento_documento`). Trocar a ordem mostraria os documentos
+   * do processo errado numa tela cujo assunto é o processo instaurado.
+   */
+  async gerarZipDoProcesso(
+    itemId: number,
+  ): Promise<{ zip: Buffer; nome: string }> {
+    const item = await this.prisma.caixaEntrada.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        numeroSei: true,
+        numeroProcessoSei: true,
+        idProcedimento: true,
+        idProcedimentoProcesso: true,
+        idUnidadeSei: true,
+        agenteRegulado: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException("Item não encontrado");
+    }
+
+    const idProcedimento = item.idProcedimentoProcesso ?? item.idProcedimento;
+    if (!idProcedimento) {
+      throw new NotFoundException("Nenhum documento disponível");
+    }
+
+    const idUnidade = await this.resolverUnidade(
+      item.idUnidadeSei,
+      item.agenteRegulado,
+    );
+    const numero = item.numeroProcessoSei ?? item.numeroSei ?? String(itemId);
+    const nome = `documentos_${numero}.zip`;
+
+    return { zip: await this.gerarZip(idProcedimento, idUnidade, nome), nome };
+  }
+
+  /**
+   * Todos os documentos de um processo num ZIP.
+   *
+   * Documento que não baixa entra como um `.txt` com o motivo, em vez de
+   * simplesmente faltar. Um ZIP com 12 dos 15 documentos e nenhuma explicação
+   * parece completo, e quem confere o processo não tem como notar a ausência.
+   */
+  async gerarZip(
+    idProcedimento: string,
+    idUnidadeHint: string | null,
+    nomeZip: string,
+  ): Promise<Buffer> {
+    const documentos = await this.listarPorProcedimento(
+      idProcedimento,
+      idUnidadeHint,
+    );
+
+    if (documentos.length === 0) {
+      throw new NotFoundException("Nenhum documento encontrado");
+    }
+
+    const arquivo = archiver("zip", { zlib: { level: 9 } });
+    const pedacos: Buffer[] = [];
+    arquivo.on("data", (p: Buffer) => pedacos.push(p));
+
+    const finalizado = new Promise<void>((cumprir, recusar) => {
+      arquivo.on("end", () => cumprir());
+      arquivo.on("error", recusar);
+    });
+
+    const usados = new Map<string, number>();
+
+    for (const documento of documentos) {
+      try {
+        const { bytes, nomeArquivo } = await this.obterBytes(
+          documento.numero,
+          documento.tipo,
+          idUnidadeHint,
+        );
+        arquivo.append(bytes, { name: this.semRepetir(nomeArquivo, usados) });
+      } catch (erro) {
+        this.logger.warn(
+          `Documento ${documento.numero} fora do ZIP: ${this.mensagem(erro)}`,
+        );
+        arquivo.append(
+          `Não foi possível baixar este documento.\n\nNúmero: ${documento.numero}\nNome: ${documento.nome}\nMotivo: ${this.mensagem(erro)}\n`,
+          { name: `ERRO_${documento.numero}.txt` },
+        );
+      }
+    }
+
+    await arquivo.finalize();
+    await finalizado;
+
+    this.logger.log(
+      `ZIP ${nomeArquivoSeguro(nomeZip)} montado com ${documentos.length} documentos.`,
+    );
+
+    return Buffer.concat(pedacos);
+  }
+
+  /**
+   * Documentos do processo concatenados num único PDF.
+   *
+   * Os internos são HTML e passam pela conversão sem navegador; os externos já
+   * são binários e entram direto quando são PDF. Formato que não é PDF nem HTML
+   * (planilha, por exemplo) não tem como ser concatenado e é reportado.
+   */
+  async gerarPdfUnificado(
+    idProcedimento: string,
+    idUnidade: string,
+  ): Promise<ResultadoJuncao> {
+    const documentos = await this.listarPorProcedimento(
+      idProcedimento,
+      idUnidade,
+    );
+
+    if (documentos.length === 0) {
+      throw new NotFoundException("Nenhum documento encontrado");
+    }
+
+    const paraJuntar: PdfParaJuntar[] = [];
+    const falhasAntes: FalhaAoJuntar[] = [];
+
+    for (const documento of documentos) {
+      try {
+        const { bytes, contentType } = await this.obterBytes(
+          documento.numero,
+          documento.tipo,
+          idUnidade,
+        );
+
+        if (this.ehPdf(bytes, contentType)) {
+          paraJuntar.push({
+            numero: documento.numero,
+            nome: documento.nome,
+            bytes,
+          });
+          continue;
+        }
+
+        if (this.ehHtml(bytes, contentType)) {
+          const convertido = await this.html.converter(
+            this.comoTexto(bytes),
+          );
+          paraJuntar.push({
+            numero: documento.numero,
+            nome: documento.nome,
+            bytes: convertido,
+          });
+          continue;
+        }
+
+        falhasAntes.push({
+          numero: documento.numero,
+          nome: documento.nome,
+          motivo: `Formato não concatenável em PDF (${contentType})`,
+        });
+      } catch (erro) {
+        this.logger.warn(
+          `Documento ${documento.numero} fora do PDF: ${this.mensagem(erro)}`,
+        );
+        falhasAntes.push({
+          numero: documento.numero,
+          nome: documento.nome,
+          motivo: this.mensagem(erro).slice(0, 200),
+        });
+      }
+    }
+
+    const juncao = await juntarPdfs(paraJuntar);
+    const falhas = [...falhasAntes, ...juncao.falhas];
+
+    /*
+      A condição é `incluidos`, não `paginas`.
+
+      Nenhum documento incluído é o fato inequívoco. Contagem de página não serve
+      de porteiro aqui porque o pdf-lib acrescenta uma folha em branco ao salvar
+      documento vazio — checar "páginas > 0" daria certo para um conjunto onde
+      nada entrou.
+    */
+    if (juncao.incluidos === 0) {
+      const detalhe = falhas
+        .slice(0, 5)
+        .map((f) => `${f.numero} (${f.motivo})`)
+        .join("; ");
+      throw new NotFoundException(
+        `Nenhum documento pôde ser convertido para PDF. ${falhas.length} falharam: ${detalhe}`,
+      );
+    }
+
+    return { ...juncao, falhas };
+  }
+
+  /**
+   * Gera o conjunto probatório e o junta ao processo instaurado.
+   *
+   * Reúne os documentos do processo de FISCALIZAÇÃO num PDF único e o inclui como
+   * documento externo no processo SANCIONATÓRIO — são dois processos distintos no
+   * SEI, e é por isso que o item precisa ter os dois identificadores.
+   *
+   * O upload e a inclusão usam a MESMA unidade, porque o SEI valida isso e recusa
+   * o vínculo se divergirem.
+   */
+  async incluirConjuntoProbatorio(
+    itemId: number,
+  ): Promise<RespostaConjuntoProbatorio> {
+    const item = await this.prisma.caixaEntrada.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        numeroSei: true,
+        idProcedimento: true,
+        idProcedimentoProcesso: true,
+        idUnidadeSei: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException("Item não encontrado");
+    }
+    if (!item.idProcedimento) {
+      throw new BadRequestException(
+        "Processo de fiscalização sem id_procedimento",
+      );
+    }
+    if (!item.idProcedimentoProcesso) {
+      throw new BadRequestException(
+        "Processo ainda não foi instaurado (sem id_procedimento_processo)",
+      );
+    }
+
+    const idUnidade = item.idUnidadeSei ?? UNIDADE_PADRAO_CONJUNTO;
+
+    const pdf = await this.gerarPdfUnificado(item.idProcedimento, idUnidade);
+
+    const nomeArquivo = `Conjunto_probatorio_${item.numeroSei ?? itemId}.pdf`;
+
+    let idArquivo: string;
+    try {
+      idArquivo = await this.sei.enviarArquivo(
+        idUnidade,
+        nomeArquivo,
+        pdf.bytes,
+      );
+    } catch (erro) {
+      throw new BadGatewayException(
+        `Erro ao fazer upload do arquivo: ${this.mensagem(erro)}`,
+      );
+    }
+
+    let resultado: Record<string, unknown>;
+    try {
+      resultado = (await this.sei.incluirDocumentoExterno(
+        item.idProcedimentoProcesso,
+        idUnidade,
+        {
+          idSerie: SERIE_ANEXO,
+          idArquivo,
+          dataDocumento: chaveDoDia(new Date()),
+          nomeArvore: "Conjunto probatório",
+          descricao: `Documentos do processo de fiscalização ${item.numeroSei ?? ""}`.trim(),
+        },
+      )) as Record<string, unknown>;
+    } catch (erro) {
+      throw new BadGatewayException(
+        `Erro ao incluir documento externo: ${this.mensagem(erro)}`,
+      );
+    }
+
+    // A lista de documentos do processo mudou. Sem invalidar, o usuário não veria
+    // o documento que acabou de gerar e tentaria de novo, duplicando no SEI.
+    await this.cache.invalidarProcesso(item.idProcedimentoProcesso);
+
+    const kb = Math.floor(pdf.bytes.length / 1024);
+    const total = pdf.incluidos + pdf.falhas.length;
+
+    const resposta: RespostaConjuntoProbatorio = {
+      sucesso: true,
+      id_documento: this.texto(resultado.idDocumento),
+      documento_formatado: this.texto(resultado.documentoFormatado),
+      link_acesso: this.texto(resultado.linkAcesso),
+      tamanho_pdf: pdf.bytes.length,
+      total_docs: total,
+      docs_incluidos: pdf.incluidos,
+      docs_falha: pdf.falhas,
+      mensagem: `Conjunto probatório incluído com sucesso (${pdf.incluidos}/${total} documentos, ${kb} KB).`,
+    };
+
+    /*
+      O aviso não é enfeite.
+
+      Conjunto probatório incompleto que se apresenta como completo é pior do que
+      um erro: quem assina não tem como saber o que ficou de fora, e é peça de
+      processo sancionatório.
+    */
+    if (pdf.falhas.length > 0) {
+      const nomes = pdf.falhas
+        .slice(0, 5)
+        .map((f) => f.numero)
+        .join(", ");
+      resposta.aviso =
+        `${pdf.falhas.length} documento(s) não puderam ser incluídos no PDF: ${nomes}. ` +
+        "Esses documentos precisam ser anexados manualmente se necessário.";
+    }
+
+    return resposta;
+  }
+
+  // ==========================================================================
   // Apoio
   // ==========================================================================
+
+  private texto(valor: unknown): string | null {
+    return typeof valor === "string" && valor ? valor : null;
+  }
+
+  /** `application/pdf` no cabeçalho, ou a assinatura `%PDF` nos bytes. */
+  private ehPdf(bytes: Buffer, contentType: string): boolean {
+    return (
+      contentType.toLowerCase().includes("pdf") ||
+      bytes.subarray(0, 4).toString("latin1") === "%PDF"
+    );
+  }
+
+  /**
+   * HTML pelo cabeçalho ou pelo início do conteúdo.
+   *
+   * A checagem dos bytes existe porque documento interno do SEI às vezes chega
+   * com `application/octet-stream`: confiar só no cabeçalho classificaria como
+   * formato desconhecido e deixaria de fora justamente o corpo do processo.
+   */
+  private ehHtml(bytes: Buffer, contentType: string): boolean {
+    if (contentType.toLowerCase().includes("html")) {
+      return true;
+    }
+    const inicio = bytes.subarray(0, 200).toString("latin1").toLowerCase();
+    return inicio.includes("<html") || inicio.includes("<!doctype html");
+  }
+
+  /**
+   * Bytes como texto, respeitando o charset declarado.
+   *
+   * O SEI serve documento antigo em ISO-8859-1. Ler tudo como UTF-8 trocaria
+   * cada acento por caractere de substituição, e o PDF sairia com "FISCALIZA��O".
+   */
+  private comoTexto(bytes: Buffer): string {
+    const amostra = bytes.subarray(0, 1024).toString("latin1");
+
+    /*
+      As aspas são opcionais no padrão porque o SEI escreve das duas formas:
+      `charset="iso-8859-1"` no `<meta>` e `charset=iso-8859-1` no cabeçalho.
+      Exigir a forma sem aspas — que é a intuitiva de escrever — faria a detecção
+      falhar justamente no caso mais comum, e todo acento sairia como caractere de
+      substituição no PDF.
+    */
+    const latino = /charset\s*=\s*["']?\s*(iso-8859-1|latin1)/i.test(amostra);
+
+    return bytes.toString(latino ? "latin1" : "utf8");
+  }
+
+  /** Evita nome repetido dentro do ZIP, que sobrescreveria o anterior. */
+  private semRepetir(nome: string, usados: Map<string, number>): string {
+    const vezes = usados.get(nome);
+
+    if (vezes === undefined) {
+      usados.set(nome, 0);
+      return nome;
+    }
+
+    const proximo = vezes + 1;
+    usados.set(nome, proximo);
+
+    const ponto = nome.lastIndexOf(".");
+    return ponto > 0
+      ? `${nome.slice(0, ponto)}_${proximo}${nome.slice(ponto)}`
+      : `${nome}_${proximo}`;
+  }
 
   /**
    * Unidade a usar para um item da caixa de entrada.

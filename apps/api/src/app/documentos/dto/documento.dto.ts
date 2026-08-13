@@ -124,6 +124,28 @@ export function extrairNomeDaDescricao(
   return `Documento ${numero}`;
 }
 
+/**
+ * Resposta de `/processos-andamento/{id}/incluir-conjunto-probatorio`.
+ *
+ * `docs_falha` e `aviso` existem porque conjunto probatório incompleto que se
+ * apresenta como completo é pior do que um erro: é peça de processo
+ * sancionatório, e quem assina precisa saber o que ficou de fora.
+ */
+export interface RespostaConjuntoProbatorio {
+  sucesso: true;
+  id_documento: string | null;
+  documento_formatado: string | null;
+  link_acesso: string | null;
+  tamanho_pdf: number;
+  /** Documentos encontrados no processo de fiscalização. */
+  total_docs: number;
+  /** Quantos entraram no PDF. */
+  docs_incluidos: number;
+  docs_falha: { numero: string; nome: string; motivo: string }[];
+  mensagem: string;
+  aviso?: string;
+}
+
 /** Extensão de arquivo correspondente a um `Content-Type`. */
 export function extensaoPorContentType(contentType: string): string {
   const tipo = contentType.toLowerCase().split(";")[0].trim();

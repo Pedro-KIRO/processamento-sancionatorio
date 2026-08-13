@@ -150,7 +150,11 @@ VALUES
 
     -- Documentos do SEI: listar, ler e baixar. Uma permissão só, porque as três
     -- ações são leitura do mesmo acervo.
-    ('processamento:documentos:consultar', 'processamento', 'Consultar e baixar documentos do SEI', TRUE)
+    ('processamento:documentos:consultar', 'processamento', 'Consultar e baixar documentos do SEI', TRUE),
+
+    -- Permissão separada porque ESCREVE no SEI: gera o conjunto probatório e o
+    -- junta ao processo instaurado. Consultar documento é leitura; isto não é.
+    ('processamento:documentos:incluir-conjunto-probatorio', 'processamento', 'Incluir o conjunto probatório no processo instaurado', TRUE)
 ON CONFLICT (identificador) DO NOTHING;
 
 INSERT INTO gestao_acessos_v2.tb_usuarios (nome, email, oid, ativo)
